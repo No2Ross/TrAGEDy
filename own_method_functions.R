@@ -1414,9 +1414,98 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type){
       choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] - penalty_mtx[i, (j-1)])  )
       choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j] - penalty_mtx[(i-1), (j-1)] )
       
-      #choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j]))
-      #choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] )  )
-      #choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j]  )
+      choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j]))
+      choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] )  )
+      choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j]  )
+      
+      final_choice <- min(c(choice1, choice2, choice3))
+      
+      traceback_mtx[i,j] <- final_choice
+      
+    }
+    
+  }
+  row.names(traceback_mtx) <- row.names(penalty_mtx)
+  colnames(traceback_mtx) <- colnames(penalty_mtx)
+  
+  return(traceback_mtx)
+}
+
+ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
+  
+  penalty_mtx_cp <- penalty_mtx
+  
+  if(cut_type == "minimum"){
+    choice <- c(min(penalty_mtx[,1]), min(penalty_mtx[1,]))
+    
+    index_choice <- which(choice == min(choice))
+    
+    if (index_choice == 1){
+      loc <- c(which(penalty_mtx[,1] == choice[index_choice]), 1)
+    }
+    
+    else{
+      loc <- c(1, which(penalty_mtx[1,] == choice[index_choice]))
+    }
+    
+    start <- loc
+    
+    last_row <- length(penalty_mtx[,1])
+    last_column <- length(penalty_mtx[1,])
+    
+    #Find minimum at end to start from
+    choice <- c( min( penalty_mtx[ last_row , ] ), min( penalty_mtx[ , last_column ] ) )
+    
+    index_choice <- which(choice == min(choice))
+    
+    
+    if (index_choice == 1){
+      loc <- c( last_row , which( penalty_mtx[ last_row , ] == choice[index_choice] ) )
+    }
+    
+    else{
+      loc <- c( which( penalty_mtx[ , last_column ] == choice[index_choice] ), last_column )
+    }
+    
+    end <- loc
+    
+    output <- find_start_end(penalty_mtx, start, end)
+    
+    penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
+    
+    
+  }
+  
+  
+  else{
+    loc <- c(1,1)
+    
+    penalty_mtx <- penalty_mtx[ loc[1]:length(penalty_mtx[,1]) , loc[2]:length(penalty_mtx[1,]) ]
+    
+  }
+  #Above section is if we want to start the scoring matrix from the lowest point of initial alignment, at the moment this doesn't happen
+  
+  row_length <- length(penalty_mtx[,1])
+  col_length <- length(penalty_mtx[1,])
+  
+  traceback_mtx <- matrix(0, nrow = length(row.names(penalty_mtx)), ncol = length(colnames(penalty_mtx)))
+  
+  traceback_mtx[row_length,col_length] <- penalty_mtx[row_length, col_length]
+  
+  traceback_mtx[row_length,] <- own_fib_ROC(penalty_mtx[row_length,])
+  
+  traceback_mtx[,col_length] <- own_fib_ROC(penalty_mtx[,col_length])
+  
+  for (i in ( length(traceback_mtx[,1]) -1):1){
+    
+    for (j in ( length(traceback_mtx[1,]) -1):1){
+      choice1 <- traceback_mtx[(i+1), j] + ( (penalty_mtx[i,j] - penalty_mtx[(i+1), j] ))
+      choice2 <- traceback_mtx[i,(j+1)] + ((penalty_mtx[i,j] - penalty_mtx[i, (j+1)])  )
+      choice3 <- traceback_mtx[(i+1),(j+1)] + (penalty_mtx[i,j] - penalty_mtx[(i+1), (j+1)] )
+      
+      choice1 <- traceback_mtx[(i+1), j] + ( (penalty_mtx[i,j]))
+      choice2 <- traceback_mtx[i,(j+1)] + ((penalty_mtx[i,j] )  )
+      choice3 <- traceback_mtx[(i+1),(j+1)] + (penalty_mtx[i,j]  )
       
       final_choice <- min(c(choice1, choice2, choice3))
       
@@ -1438,9 +1527,9 @@ find_start_end <- function(penalty_mtx, start, end){
   #determined by finding the maximum index based off the context of the metaCell total of each condition
   index_1 <- which(start == max(start))
   index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )
-  print("section")
-  print(start)
-  print(paste0("index:",index_1))
+  # print("section")
+  # print(start)
+  # print(paste0("index:",index_1))
   
   #get rate of change for the start
   if(index_1 == 1){
@@ -1471,8 +1560,6 @@ find_start_end <- function(penalty_mtx, start, end){
   
   #cutoff_1 <- median(change_v1)
   cutoff_1 <- mean(change_v1)
-  
-  print(cutoff_1)
   
   selection_1 <- slice_1[1:start[index_1]]
   
@@ -1508,10 +1595,6 @@ find_start_end <- function(penalty_mtx, start, end){
     change_v2 <- append(change_v2, abs(slice_2[i]-abs(slice_2[i-1])))
     
   }
-  print("")
-  print(distances_2)
-  print(median(change_v2))
-  print("")
   
   #cutoff_2 <- median(change_v2)
   cutoff_2 <- mean(change_v2)
@@ -1544,7 +1627,7 @@ own_fib_ROC <- function(number_vector){
   for (number in 2:length(number_vector)){
     result <- output[(number-1)] + (number_vector[number] - number_vector[(number-1)]) 
     
-    #result <- output[(number-1)] + (number_vector[number]) 
+    result <- output[(number-1)] + (number_vector[number]) 
     
     output <- append(output, result)
   }
@@ -1601,11 +1684,10 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
     # print(loc)
     print(paste0("Choice: ", choice))
     # print(paste0("Previous choice: ", previous_choice))
-    print("problem")
-    
+    print(paste0("Matrix location: ",loc))
+    print(error_surface[loc[1], loc[2]])
+    print("")
     if (choice %in% c(2,3)){
-      print(loc)
-      
       temp_loc <- loc + as.numeric(movement_frame[choice,])
       
       temp_choice_vector <- c(error_surface[temp_loc[1]+1, temp_loc[2]+1], error_surface[temp_loc[1]+1 , temp_loc[2]], error_surface[temp_loc[1], temp_loc[2]+1]  )
@@ -1873,7 +1955,7 @@ traceback_pathfind <- function(penalty_mtx, cut_type){
 pathfind <- function(penalty_mtx, cut_type){
   choice_list <- list(traceforward_pathfind(penalty_mtx, cut_type), traceback_pathfind(penalty_mtx, cut_type) )
   
-  scores <- c(sum(choice_list[[1]][,3]), sum(choice_list[[2]][,3]))
+  scores <- c(( sum(choice_list[[1]][,3])/length(choice_list[[1]][,3]) ),( sum(choice_list[[2]][,3])/length(choice_list[[2]][,3]) )  )
   
   #return whichever path has the lowest overall score
   
