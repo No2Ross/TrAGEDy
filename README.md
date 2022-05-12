@@ -8,3 +8,10 @@ Using TrAGEDy we can find the common alignment between the two conditions, ident
 
 TrAGEDy can then arrange the cells on a common pseudotime axis in order to pull out genes which are differentially expressed between the conditions at different points in the shared process.
 
+# Method
+
+The first step in the TrAGEDy process is to perform Trajectory Inference (TI) on the datasets. This can be down with any method which generates pseudotime values for the cells(A). We then sample gene expression at different points of pseudotime on each process by creating pseudoCells across each conditions pseudotime axis. The gene expression values of the pseudoCells are calculated from the surrounding cells, the closer a cell is in pseudotime to the pseudoCell, the more it contributes to its gene expression (B).
+
+We then match pseudoCells between each condition that have similar gene expression profiles, leaving pseudoCells which are not part of the common underlying process unmatched (C). Using these matches, we adjust the pseudotime values of the pseudoCells, creating a common pseudotime axis which reflects the shared biological process between the two conditions (D).
+
+
