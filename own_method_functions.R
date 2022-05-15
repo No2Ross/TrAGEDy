@@ -99,13 +99,13 @@ monocle_pseudobulk <- function(mon_obj){
 slingshot_pseudo_bulk <- function(exp_mtx, sce_obj, slingshot_obj,node_info){
   output <- list()
   
-  for (lineage in 1:length(slingshot_obj@curves)){
+  for (lineage in 1:length(slingshot_obj)){
     node_pseudotime <- node_info[[ paste0("lineage_", lineage, "_pseudotime") ]]
     cell_pseudotime <- data.frame(sce_obj@colData@listData[[paste0("slingPseudotime_", lineage)]],sce_obj@colData@rownames)
     cell_pseudotime <- cell_pseudotime[ order(cell_pseudotime[,1]), ]
     
     #Removes all items from variable if there is only 1 lineage
-    if(length(slingshot_obj@curves) > 1){
+    if(length(slingshot_obj) > 1){
       cell_pseudotime <- cell_pseudotime[ -which( is.na(cell_pseudotime) == T ), ]
     }
 
@@ -302,7 +302,7 @@ cell_align_node_branch <- function(tree, end_nodes, root_node, exp_mtx, node_emb
 }
 
 #pseudobulk or wilcoxon plus permutation or t-test
-slingshot_sliding_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo_2, pseudo_window, method, logfc_threshold, pval_threshold){
+slingshot_sliding_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo_2, pseudo_window, method, logfc_threshold, pval_threshold, min.pct){
   output <- list()
   
   #get the windows of pseudotime we need for comparing the cells 
@@ -347,7 +347,7 @@ slingshot_sliding_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo
 }
 
 #Only includes aligned cells in analysis 
-slingshot_align_only_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo_2, pseudo_window ,method, logfc_threshold, pval_threshold, all.genes, logfc.metric){
+slingshot_align_only_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo_2, pseudo_window ,method, logfc_threshold, pval_threshold, all.genes, logfc.metric, min.pct){
   minimum_limit <- max( c( min(pseudo_1[,1]), min(pseudo_2[,1]) ) )
   
   maximum_limit <- min( c( max(pseudo_1[,1]), max(pseudo_2[,1]) ) )
@@ -442,7 +442,7 @@ slingshot_align_only_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pse
   
   #return(all_grouping)
   
-  if (method == "t-test"){ output <- window_t_test_de(expr_mtx_1, expr_mtx_2, all_grouping, logfc_threshold, pval_threshold, all.genes, logfc.metric) }
+  if (method == "t-test"){ output <- window_t_test_de(expr_mtx_1, expr_mtx_2, all_grouping, logfc_threshold, pval_threshold, all.genes, logfc.metric, min.pct) }
   
   else { output <- permutation_de(expr_mtx_1, expr_mtx_2, all_grouping) }
   
@@ -458,76 +458,30 @@ slingshot_align_only_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pse
   return(output)
 }
 
-window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_threshold, pval_threshold, all.genes, logfc.metric){
-  output <- list()
-  for (i in 1:length(cell_groupings[[1]])){
-    print(i)
-    #print(cell_groupings[[1]][i])
-    #print(cell_groupings[[2]][i])
-    expr_mtx_1_window <- as.matrix(expr_mtx_1[ , which(colnames(expr_mtx_1) %in% cell_groupings[[1]][[i]]) ])
-    expr_mtx_2_window <- as.matrix(expr_mtx_2[ , which(colnames(expr_mtx_2) %in% cell_groupings[[2]][[i]]) ])
-    
-    gene_list <- intersect(row.names(expr_mtx_1_window), row.names(expr_mtx_2_window))
-    
-    expr_mtx_1_window <- expr_mtx_1_window[ which( row.names(expr_mtx_1_window) %in% gene_list) ,]
-   
-    expr_mtx_2_window <- expr_mtx_2_window[ which( row.names(expr_mtx_2_window) %in% gene_list) ,]
 
-    expr_mtx_1_window <- expr_mtx_1_window[match(row.names(expr_mtx_1_window), gene_list),]
-    expr_mtx_2_window <- expr_mtx_2_window[match(row.names(expr_mtx_2_window), gene_list),]
-
-    #remove genes whose mean is zero in both conditions
-    mean_mtx1 <- rowMeans(expr_mtx_1_window)
-    names(mean_mtx1) <- row.names(expr_mtx_1_window)
-    
-    mean_mtx2 <- rowMeans(expr_mtx_2_window)
-    names(mean_mtx2) <- row.names(expr_mtx_2_window)
-    
-    gene_df <- data.frame("gene", 0, 0)
-    colnames(gene_df) <- c("gene_name", "p_val", "logfc.change")
-    
-    if( logfc.metric == "Seurat" ){
-      condition_1 <- mean.fxn(expr_mtx_1_window)
-      condition_2 <- mean.fxn(expr_mtx_2_window)
+pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct){
+  genes <- intersect(row.names(expr_mtx_1), row.names(expr_mtx_2))
+  
+  final_genes <- genes
+  
+  count_mtx_1 <- 1 - (rowCounts(expr_mtx_1, value = 0) /length(colnames(expr_mtx_1)))
+  names(count_mtx_1) <- row.names(expr_mtx_1)
+  
+  count_mtx_2 <- 1 - (rowCounts(expr_mtx_2, value = 0) /length(colnames(expr_mtx_2)))
+  names(count_mtx_2) <- row.names(expr_mtx_2)
+  
+  for (i in 1:length(genes)){
+    if(count_mtx_1[genes[i]] < min.pct | count_mtx_2[genes[i]] < min.pct ){
+      final_genes <- final_genes[-i]
       
-      logfc_change <- condition_1 - condition_2
-      print("Seurat method")
     }
     
-    else{
-      condition_1 <- rowMeans(expr_mtx_1_window)
-      condition_2 <- rowMeans(expr_mtx_2_window)
-      
-      logfc_change <- log2(condition_1 / condition_2)
-      print("Own method")
-    }
-    
-   
-    test_result_vector <- c()
-    
-    for (gene in gene_list){
-      test_result <- t.test(expr_mtx_1_window[gene,], expr_mtx_2_window[gene,])
-      
-      test_result_vector <- append(test_result_vector, test_result$p.value)
-    }
-    
-    gene_df <- data.frame(gene_name = gene_list, logfc = logfc_change, adj_pval = test_result_vector)
-    
-    library(stats)
-    
-    gene_df[,3] <- p.adjust(gene_df[,3], method = "bonferroni", length(gene_list))
-    if (all.genes == F){
-      #Remove genes with non-significant p-values and logfc not in the threshold
-      gene_df <- gene_df[which(gene_df[,3] < pval_threshold),]
-      
-      gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
-    }
-    
-    output[[ names(cell_groupings[[1]])[i] ]] <- gene_df
   }
   
-  return(output)
+  count_mtx_1 <- count_mtx_1[final_genes]
+  count_mtx_2 <- count_mtx_2[final_genes]
   
+  return(list(count_mtx_1, count_mtx_2))
 }
 
 align_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pseudo_2 ,method, logfc_threshold, pval_threshold, all.genes, logfc.metric){
@@ -1222,14 +1176,20 @@ commonID <- function(captures, clusters){
     
     occurence <- table(cluster_c)
     print(table(cluster_c))
-    print(names(occurence)[which(occurence == max(occurence))])
-    
+
     choice <- names(occurence)[which(occurence == max(occurence))]
     
     if (length(choice) > 1){
       choice <- paste0(choice, collapse = "/")
       
     }
+    
+    #If there's no cells near it
+    if(sum(table(cluster_c)) ==0){
+      choice <- "None"
+    }
+    
+    print(choice)
     
     output[names(captures)[i],1] <- choice
       
@@ -1250,18 +1210,17 @@ slingshot_node_maker <- function(sce_obj, slingshot_obj, total_nodes, prefix, di
   #We don't need to give the nodes a place on the phate map, they just need pseudotimes to do pseudobulk or cellalign
   output <- list()
   
-  for (lineage in 1:length(slingshot_obj@curves)){
-    print(length(slingshot_obj@curves))
+  for (lineage in 1:length(total_nodes)){
     #pseudotime <- data.frame(sce_obj@colData@rownames,sce_obj@colData@listData[["pseudotime"]])
     pseudotime <- data.frame(sce_obj@colData@listData[[paste0("slingPseudotime_", lineage)]], row.names = sce_obj@colData@rownames)
     pseudotime <- data.frame(pseudotime[ order(pseudotime[,1]), ], row.names = sce_obj@colData@rownames[ order(pseudotime[,1]) ] )
     max_pseudo <- max(pseudotime[,1], na.rm=T)
     
-    print(max_pseudo)
+    #print(max_pseudo)
     
     #Get pseudotime of nodes
     interval <- max_pseudo / total_nodes[lineage]
-    print(interval)
+    #print(interval)
     node_pseudotime_vector <- c(0)
     #Include 0 as a node but not the maximum
     for (node in 2:total_nodes[lineage]){ 
@@ -1382,7 +1341,14 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type){
     
     end <- loc
     
+    print("start")
+    print(start)
+    print("end")
+    print(end)
+    
     output <- find_start_end(penalty_mtx, start, end)
+    
+    print(output)
     
     penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
     
@@ -1469,6 +1435,11 @@ ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
     
     end <- loc
     
+    print("start")
+    print(start)
+    print("end")
+    print(end)
+    
     output <- find_start_end(penalty_mtx, start, end)
     
     penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
@@ -1524,9 +1495,9 @@ ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
 find_start_end <- function(penalty_mtx, start, end){
   
   #Need to find where to take the slice
-  #determined by finding the maximum index based off the context of the metaCell total of each condition
+  #determined by finding the maximum index based off the context of the number of metaCells in each condition
   index_1 <- which(start == max(start))
-  index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )
+  index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )[1]
   # print("section")
   # print(start)
   # print(paste0("index:",index_1))
@@ -1556,10 +1527,26 @@ find_start_end <- function(penalty_mtx, start, end){
     
   }
 
+  #print(distances_1)
+  print("distances")
   print(distances_1)
+  print("change")
+  print(change_v1)
+  
+  print("dist function")
+  print(dist(slice_1))
+  print("median dist")
+  print(median(dist(slice_1)))
+  
+  print("median cutoff")
+  print(median(change_v1))
+  
+  print("mean cutoff")
+  print(mean(change_v1))
   
   #cutoff_1 <- median(change_v1)
   cutoff_1 <- mean(change_v1)
+  cutoff_1 <- median(dist(slice_1))
   
   selection_1 <- slice_1[1:start[index_1]]
   
@@ -1570,9 +1557,9 @@ find_start_end <- function(penalty_mtx, start, end){
   start[index_1] <- min(which(distances_1 < cutoff_1))
   
   index_2 <- which(end == min(end))
-  index_2 <- which( c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,])) == min(  c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,]))  )     )
+  index_2 <- which( c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,])) == min(  c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,]))  )     )[1]
   
-  #print(end[index_2])
+  print(end[index_2])
   
   if(index_2 == 1){
     slice_2 <- penalty_mtx[,length(penalty_mtx[1,])]
@@ -1598,6 +1585,8 @@ find_start_end <- function(penalty_mtx, start, end){
   
   #cutoff_2 <- median(change_v2)
   cutoff_2 <- mean(change_v2)
+  cutoff_2 <- median(dist(slice_2))
+  
   
   end[index_2] <- max(which(distances_2 < cutoff_2))
   
@@ -1682,11 +1671,11 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
     
     choice <- which(choice_vector == min(choice_vector))
     # print(loc)
-    print(paste0("Choice: ", choice))
+    #print(paste0("Choice: ", choice))
     # print(paste0("Previous choice: ", previous_choice))
-    print(paste0("Matrix location: ",loc))
-    print(error_surface[loc[1], loc[2]])
-    print("")
+    #print(paste0("Matrix location: ",loc))
+    #print(error_surface[loc[1], loc[2]])
+    #print("")
     if (choice %in% c(2,3)){
       temp_loc <- loc + as.numeric(movement_frame[choice,])
       
@@ -1695,7 +1684,7 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
       temp_choice <- which(temp_choice_vector == min(temp_choice_vector))
       #print(paste0("temp_choice: ", temp_choice))
       if ( !(temp_choice %in% c(choice,1)) ){
-        print("in")
+        #print("in")
         loc <- loc + c(1,1)
         
         choice <- 1
@@ -1751,24 +1740,24 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
   last_index_1 <- seq(loc[1], loc[1] + finish_choice[1])
   last_index_2 <- seq(loc[2], loc[2] + finish_choice[2])
   
-  print(last_index_1)
-  print(last_index_2)
+  #print(last_index_1)
+  #print(last_index_2)
   
-  print(finish_choice)
+  #print(finish_choice)
   
   finish_choice <- finish_choice + 1
   
-  print(finish_choice)
+  #print(finish_choice)
   
   final_addition <- data.frame(rep(row.names(error_surface)[last_index_1], finish_choice[2]), rep(colnames(error_surface)[last_index_2], finish_choice[1]) )
   colnames(final_addition) <- colnames(match_frame)
-  print(final_addition)
+  #print(final_addition)
   
-  print(colnames(match_frame))
+  #print(colnames(match_frame))
   
   match_frame <- rbind(match_frame,final_addition)
   
-  print(penalty_mtx_cut[last_index_1, last_index_2])
+  #print(penalty_mtx_cut[last_index_1, last_index_2])
   
   score_vector <- append(score_vector , c(penalty_mtx_cut[last_index_1, last_index_2]) )
   
@@ -1825,18 +1814,18 @@ traceback_pathfind <- function(penalty_mtx, cut_type){
   
   move_choice <- which( options == min(options) )
   
-  print(move_choice)
+  #print(move_choice)
   
   previous_choice = move_choice
   
   if (1 == move_choice){
     loc <- loc + factor
-    print("diag")
+    #print("diag")
   }
   
   else if (2 == move_choice){
     loc[1] <- loc[1] + factor
-    print("vertical")
+    #print("vertical")
   }
   
   else{
@@ -1929,7 +1918,7 @@ traceback_pathfind <- function(penalty_mtx, cut_type){
         final_addition <- cbind(rep(row.names(error_surface)[loc[1]:1], loc[2]) , rep(colnames(error_surface)[loc[2]:1], loc[1]))
         score_vector <- append(score_vector,penalty_mtx_cut[loc[1]:1, loc[2]:1])
         
-        print(final_addition)
+        #print(final_addition)
         
         colnames(final_addition) <- colnames(match_frame)
         
@@ -3114,7 +3103,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
   
   diff <- abs(start_pseudo_choice[1] - start_pseudo_choice[2])
   
-  print(diff)
+  #print(diff)
   
   pseudo_list[[choice_index]][,1] <- pseudo_list[[choice_index]][,1] + diff
   
@@ -3161,7 +3150,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
            #get index of the common node for the multi-matching
            common_index <- which(!(c(tree_chunk[item,1], tree_chunk[item,2]) %in% unique_nodes))
            
-           print(tree_chunk[item,common_index])
+           #print(tree_chunk[item,common_index])
            
            lower_squish <- pseudo_list[[common_index]][tree_chunk[item,common_index],1]
            
@@ -3172,7 +3161,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
            
            #upper_squish <- min( c( pseudo_list[[1]][ tree_chunk_nodes[[1]] , 1 ], pseudo_list[[2]][ tree_chunk_nodes[[2]] , 1 ] ) )
            squish_nodes <- tree_chunk[ which(tree_chunk[,common_index]==tree_chunk[item,common_index]) ,(3-common_index)]
-           print(paste0("squish: ", squish_nodes))
+           #print(paste0("squish: ", squish_nodes))
            
            #Finds the nodes that occur after the final matching in this particular multimatch
            after_nodes <-c( row.names(pseudo_list[[3-common_index]])[ ( which( row.names(pseudo_list[[3-common_index]]) == squish_nodes[length(squish_nodes)] ) +1 ) ],
@@ -3180,7 +3169,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
            
            #If we're doing a multi-align at the end of the process, there will be no nodes that occur after it to squish between
            if (is.na(after_nodes) == T){
-             print("argh")
+             #print("argh")
              upper_squish <- lower_squish + mean( abs( pseudo_list[[common_index]][,1] - mean(pseudo_list[[common_index]][,1]) ) )
 
            }
@@ -3192,14 +3181,12 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
            
            upper_squish <- upper_squish - ((upper_squish-lower_squish)/ length(squish_nodes))
            
-           print(paste0("upper squish", upper_squish))
-           print(paste0("lower squish", lower_squish))
-           
-           
+           #print(paste0("upper squish", upper_squish))
+           #print(paste0("lower squish", lower_squish))
            
            output <- squish_function(values = pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
            output <- scale_function(pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
-           print(paste0("output: ", output))
+           #print(paste0("output: ", output))
            diff <- abs(pseudo_list[[3-common_index]][ squish_nodes[length(squish_nodes)] , 1 ] - output[length(output)])
            
            pseudo_list[[3-common_index]][squish_nodes,1] <- output
@@ -3288,9 +3275,9 @@ cut_point <- function(cor_mtx){
 
 #scales values
 scale_function <- function(vals, scale_max, scale_min){
-  print(paste0("values scale: ",vals))
-  print(paste0("upper squish", scale_max))
-  print(paste0("lower squish", scale_min))
+  #print(paste0("values scale: ",vals))
+  #print(paste0("upper squish", scale_max))
+  #print(paste0("lower squish", scale_min))
   output <- ( (vals - min(vals)) / (max(vals) - min(vals)) ) *(  (scale_max - scale_min)) + scale_min
     
   return(output)
@@ -3496,7 +3483,7 @@ pseudo_cell_align <- function(cell_pseudo, node_pseudo_new, node_pseudo_old, win
   for (i in 1:length(node_pseudo_new[,3])){
     item <- node_pseudo_new[i,3]
     node <- node_pseudo_new[i,1]
-    print(node)
+    #print(node)
     if (item == "noalign"){
       df <- data.frame(ID = kmean_output[[node]], pseudotime = cell_pseudo_new[ kmean_output[[node]] , 1], status = "noalign")
       noalign_pseudo <- rbind(noalign_pseudo, df)
@@ -3791,7 +3778,7 @@ PlotOutput <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
   plot_counter <- 1
   
   for (i in 1:length(cut_alignment[,1])){
-    print(cut_alignment[i,1])
+    #print(cut_alignment[i,1])
     plot_df <- rbind(plot_df, data.frame("node" = cut_alignment[i,1], "group" = plot_counter, "pseudotime" = pseudo_1[cut_alignment[i,1],], "condition" = cond_names[1] , 
                      "ID" = ID_1[cut_alignment[i,1],]) )
     
@@ -3806,13 +3793,13 @@ PlotOutput <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
   unaligned_frame <- data.frame("node" = unaligned_nodes,
                                 "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
                                 "pseudotime" = c(pseudo_1[unaligned_nodes,1], pseudo_2[unaligned_nodes,1])[ is.na(c(pseudo_1[unaligned_nodes,1], pseudo_2[unaligned_nodes,1])) == F ],
-                                "condition" = c( rep(cond_names[1], length( which( grepl("X",unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl("Y",unaligned_nodes) == T ) ) )),
-                                                 "ID" = c( ID_1[unaligned_nodes[which( grepl("X",unaligned_nodes) == T)],], ID_2[unaligned_nodes[which( grepl("Y",unaligned_nodes) == T)],] ) ) 
+                                "condition" = c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )),
+                                                 "ID" = c( ID_1[unaligned_nodes[which( grepl(cond_names[1],unaligned_nodes) == T)],], ID_2[unaligned_nodes[which( grepl(cond_names[2],unaligned_nodes) == T)],] ) ) 
   
   
   plot_df <- rbind(plot_df, unaligned_frame)
   
-  print(max(plot_df$pseudotime))
+  #print(max(plot_df$pseudotime))
   
   print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID)) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
   
@@ -3938,6 +3925,147 @@ PlotAlignment <- function(alignment, score_mtx){
   score_mtx[as.matrix(cut_alignment[,1:2])] <- NA
   
   pheatmap::pheatmap(as.matrix(score_mtx), cluster_rows = F, cluster_cols = F, scale="none")
+}
+
+#Assign metaCells based on cell density across pseudotime
+#DE sliding window on cells closet to matched metaCells
+#If the number of cells don't reach a minimum cut off then we include the next match 
+#ALternatively user defines how many unique matches to include in window 
+TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, p_val = 0.05, min.pct = 0.1, logfc = 0.5){
+  capture_output <- list()
+  for (i in 1:2){
+    #Assign cells to the closet metaCell in terms of pseudotime
+    cell_embed <- data.frame(cell_list[[i]]$oldPseudotime, row.names = cell_list[[i]]@colData@rownames)
+    sampleCell_embed <- sampleCell_list[[i]]
+    
+    capture_output[[i]] <- cell_capture(cell_embed, sampleCell_embed)
+    
+  }
+  
+  matches <- matches[which(matches$Status == "match"),]
+  
+  #get window size 
+  
+  match_counter <- 0
+  cells_1 <- c()
+  cells_2 <- c()
+  
+  multi_match <- c( names( table(matches[,1]>1) ), names( table(matches[,2]>1) ) )
+  
+  #Perform DE
+  for (i in 1:length(matches[,1])){
+    
+    if(matches[i,1] %in% multi_match | matches[i,2] %in% multi_match){
+      
+      
+      
+      match_counter <- match_counter + 1
+      
+    }
+    
+    else{
+      
+      cells_1 <- append(cells_1, capture_output[[1]][matches[i,1]])
+      cells_2 <- append(cells_2, capture_output[[2]][matches[i,2]])
+      
+      match_counter <- match_counter + 1
+    }
+    
+    #If we've passed the number of matches we want to compare, do DE
+    if(match_counter > window_size ){
+      
+      match_counter <- 0
+      cells_1 <- c()
+      cells_2 <- c()
+      
+    }
+    
+  }
+  
+}
+
+
+window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_threshold, pval_threshold, all.genes, logfc.metric, min.pct){
+  
+  output <- list()
+  for (i in 1:length(cell_groupings[[1]])){
+    print(i)
+    #print(cell_groupings[[1]][i])
+    #print(cell_groupings[[2]][i])
+    expr_mtx_1_window <- as.matrix(expr_mtx_1[ , which(colnames(expr_mtx_1) %in% cell_groupings[[1]][[i]]) ])
+    expr_mtx_2_window <- as.matrix(expr_mtx_2[ , which(colnames(expr_mtx_2) %in% cell_groupings[[2]][[i]]) ])
+    
+    pct_output <- pct_calculator(expr_mtx_1_window, expr_mtx_2_window, min.pct = min.pct )
+    
+    final_genes <-names(pct_output[[1]])
+    
+    expr_mtx_1_window <- expr_mtx_1_window[final_genes,]
+    expr_mtx_2_window <- expr_mtx_2_window[final_genes,]
+    
+    gene_list <- intersect(row.names(expr_mtx_1_window), row.names(expr_mtx_2_window))
+    
+    expr_mtx_1_window <- expr_mtx_1_window[ which( row.names(expr_mtx_1_window) %in% gene_list) ,]
+    
+    expr_mtx_2_window <- expr_mtx_2_window[ which( row.names(expr_mtx_2_window) %in% gene_list) ,]
+    
+    expr_mtx_1_window <- expr_mtx_1_window[match(row.names(expr_mtx_1_window), gene_list),]
+    expr_mtx_2_window <- expr_mtx_2_window[match(row.names(expr_mtx_2_window), gene_list),]
+    
+    #remove genes whose mean is zero in both conditions
+    mean_mtx1 <- rowMeans(expr_mtx_1_window)
+    names(mean_mtx1) <- row.names(expr_mtx_1_window)
+    
+    mean_mtx2 <- rowMeans(expr_mtx_2_window)
+    names(mean_mtx2) <- row.names(expr_mtx_2_window)
+    
+    gene_df <- data.frame("gene", 0, 0, 0, 0)
+    colnames(gene_df) <- c("gene_name", "p_val", "logfc.change", "min.pct1", "min.pct2")
+    
+    if( logfc.metric == "Seurat" ){
+      condition_1 <- mean.fxn(expr_mtx_1_window)
+      condition_2 <- mean.fxn(expr_mtx_2_window)
+      
+      logfc_change <- condition_1 - condition_2
+      print("Seurat method")
+    }
+    
+    else{
+      condition_1 <- rowMeans(expr_mtx_1_window)
+      condition_2 <- rowMeans(expr_mtx_2_window)
+      
+      logfc_change <- log2(condition_1 / condition_2)
+      print("Own method")
+    }
+    
+    
+    test_result_vector <- c()
+    
+    for (gene in gene_list){
+      test_result <- t.test(expr_mtx_1_window[gene,], expr_mtx_2_window[gene,])
+      
+      test_result_vector <- append(test_result_vector, test_result$p.value)
+    }
+    
+    gene_df <- data.frame(gene_name = gene_list, logfc = logfc_change, adj_pval = test_result_vector, min.pct1 = pct_output[[1]], min.pct2 = pct_output[[2]])
+    
+    
+    library(stats)
+    
+    gene_df[,3] <- p.adjust(gene_df[,3], method = "bonferroni", length(gene_list))
+    if (all.genes == F){
+      #Remove genes with non-significant p-values and logfc not in the threshold
+      gene_df <- gene_df[which(gene_df[,3] < pval_threshold),]
+      
+      gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
+    }
+    
+    
+    
+    output[[ names(cell_groupings[[1]])[i] ]] <- gene_df
+  }
+  
+  return(output)
+  
 }
 
 
