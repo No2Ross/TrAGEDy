@@ -3789,6 +3789,13 @@ PlotOutput <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
   }
   
   plot_df <- plot_df[-1,]
+  
+  print(length(unaligned_nodes))
+  print(unaligned_nodes)
+  print(length(seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1)))
+  print(length(c(pseudo_1[unaligned_nodes,1], pseudo_2[unaligned_nodes,1])[ is.na(c(pseudo_1[unaligned_nodes,1], pseudo_2[unaligned_nodes,1])) == F ]))
+  print(c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )))
+  
   #add unaligned nodes
   unaligned_frame <- data.frame("node" = unaligned_nodes,
                                 "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
@@ -3931,7 +3938,10 @@ PlotAlignment <- function(alignment, score_mtx){
 #DE sliding window on cells closet to matched metaCells
 #If the number of cells don't reach a minimum cut off then we include the next match 
 #ALternatively user defines how many unique matches to include in window 
-TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, p_val = 0.05, min.pct = 0.1, logfc = 0.5){
+TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes){
+  
+  de_genes_output <- list()
+  
   capture_output <- list()
   for (i in 1:2){
     #Assign cells to the closet metaCell in terms of pseudotime
@@ -3947,41 +3957,136 @@ TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, 
   #get window size 
   
   match_counter <- 0
-  cells_1 <- c()
-  cells_2 <- c()
+  cells_list <- list(c(), c())
   
-  multi_match <- c( names( table(matches[,1]>1) ), names( table(matches[,2]>1) ) )
+  multi_match <- c( names(table(matches[,1]))[table(matches[,1])>1], names(table(matches[,2]))[table(matches[,2])>1] )
+  cell_groupings <- list()
+
+  comparisons <- list()
   
   #Perform DE
-  for (i in 1:length(matches[,1])){
-    
-    if(matches[i,1] %in% multi_match | matches[i,2] %in% multi_match){
+  i <- 1
+  while ( i < (length(matches[,1]) +1) ){
+
+    current <- c(matches[i,1], matches[i,2])
+
+    if(current[1] %in% multi_match | current[2] %in% multi_match){
+      multi_index <- which(current %in% multi_match)
       
+      cells_list[[multi_index]] <- append(cells_list[[multi_index]], unlist( capture_output[[multi_index]][current[multi_index]]) )
       
+      other_cells <- capture_output[[3-multi_index]][ matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index] ]
+      
+      cells_list[[3-multi_index]] <- append(cells_list[[3-multi_index]], unlist( other_cells) )
       
       match_counter <- match_counter + 1
+      
+      comparisons <- append(comparisons, list( list(current[multi_index] , matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])))
+      
+      i <- i + length(matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])
       
     }
     
     else{
       
-      cells_1 <- append(cells_1, capture_output[[1]][matches[i,1]])
-      cells_2 <- append(cells_2, capture_output[[2]][matches[i,2]])
+      cells_list[[1]] <- append(cells_list[[1]], unlist( capture_output[[1]][matches[i,1]]) )
+      cells_list[[2]] <- append(cells_list[[2]], unlist( capture_output[[2]][matches[i,2]]) )
+      
+      comparisons <- append(comparisons, list( list(matches[i,1], matches[i,2])))
       
       match_counter <- match_counter + 1
-    }
-    
-    #If we've passed the number of matches we want to compare, do DE
-    if(match_counter > window_size ){
-      
-      match_counter <- 0
-      cells_1 <- c()
-      cells_2 <- c()
-      
+      i <- i + 1
     }
     
   }
   
+  
+  number_windows <- floor(length(comparisons)/window_size)
+  
+  #Can't have a window size which is more than half the size of the number of matches
+  
+  match_counter <- 1
+  
+  final_comparisons <- c(rep(window_size, number_windows),  (length(comparisons) - (window_size * number_windows) )  ) 
+  
+  for (i in 1:length(final_comparisons)){
+    cells_1 <- c()
+    cells_2 <- c()
+    
+    for (j in 1:final_comparisons[match_counter]){
+      cells_1 <- append( cells_1, unlist( capture_output[[1]][ comparisons[[j]][[1]] ] )  )
+      cells_2 <- append( cells_2, unlist( capture_output[[2]][ comparisons[[j]][[2]] ] ) )
+      
+    }
+    comparisons <- comparisons[-(1:final_comparisons[match_counter])]
+  
+    expr_mtx_1 <- cell_list[[1]]@assays@data$logcounts[ , cells_1  ]
+    expr_mtx_2 <- cell_list[[2]]@assays@data$logcounts[ , cells_2 ]
+
+    output <- de_metrics_return(expr_mtx_1, expr_mtx_2, logfc, p_val, min.pct, all.genes)
+
+    de_genes_output <- append(de_genes_output, list(output))
+
+    match_counter <- match_counter + 1
+
+  }
+  
+  return(de_genes_output)
+}
+
+de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min.pct, all.genes){
+  
+  gene_list <- intersect(row.names(expr1), row.names(expr2))
+  
+  expr1 <- expr1[gene_list,]
+  expr2 <- expr2[gene_list,]
+  
+  temp <- cbind(expr1, expr2)
+  
+  temp <- rowSums(temp)
+  
+  gene_list <- names(temp)[which(temp > 0)]
+  
+  expr1 <- expr1[gene_list,]
+  expr2 <- expr2[gene_list,]
+
+  pct_output <- pct_calculator(expr1, expr2, min.pct = min.pct )
+  
+  gene_list <-names(pct_output[[1]])
+  
+  expr1 <- expr1[gene_list,]
+  expr2 <- expr2[gene_list,]
+  
+  gene_df <- data.frame("gene", 0, 0, 0, 0)
+  colnames(gene_df) <- c("gene_name", "p_val", "logfc.change", "min.pct1", "min.pct2")
+  
+  condition_1 <- mean.fxn(expr1)
+  condition_2 <- mean.fxn(expr2)
+    
+  logfc_change <- condition_1 - condition_2
+  
+  test_result_vector <- c()
+  
+  for (gene in gene_list){
+    test_result <- t.test(expr1[gene,], expr2[gene,])
+    
+    test_result_vector <- append(test_result_vector, test_result$p.value)
+  }
+  
+  gene_df <- data.frame(gene_name = gene_list, logfc = logfc_change, adj_pval = test_result_vector, min.pct1 = pct_output[[1]], min.pct2 = pct_output[[2]])
+  
+  
+  library(stats)
+  
+  gene_df[,3] <- p.adjust(gene_df[,3], method = "bonferroni", length(gene_list))
+  if (all.genes == F){
+    #Remove genes with non-significant p-values and logfc not in the threshold
+    gene_df <- gene_df[which(gene_df[,3] < pval_threshold),]
+    
+    gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
+  }
+ 
+  return(gene_df) 
 }
 
 
