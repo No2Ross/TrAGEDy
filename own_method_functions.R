@@ -142,6 +142,7 @@ dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method){
     
   }
   
+  
   if (dis_method == "euclidean"){
     dis_matrix <- as.matrix(dist(rbind(t(exp_mtx1), t(exp_mtx2)), diag = T, upper = T)) 
     
@@ -206,6 +207,76 @@ cell_align_node_GEV <- function(exp_mtx, node_pseudo, cell_pseudo, window_size){
   return(output)
   
 }
+
+#Estimate gene expression values for the nodes weighted by their euclidean distance in pseudotime to the cells. 
+#Window changes depending on histogram density
+#If the counts at the histogram window for the current node is less than the mean of all the bin counts, we increase the window size. Otherwise we decrease it
+#Option remains to not do that
+nodeExpressionEstimate <- function(cell_exp_mtx, node_pseudo, cell_pseudo, window_size, adjust.window){
+  
+  output <- list()
+  
+  if(adjust.window){
+    #Get window sizes for each node
+    hist_output <- hist(cell_pseudo, breaks = seq(min(cell_pseudo) , max(cell_pseudo), length.out = (length(node_pseudo) + 1 ) ) )
+    
+    #If it's 0, then it won't calculate it
+    #hist_output$counts <- hist_output$counts + 1
+    
+    hist_mean <- mean(hist_output$breaks)
+    
+    alt_hist_mean <- hist_output$counts[min(which(hist_output$breaks > mean(cell_pseudo)))]
+    
+    #If the interpolated point is in an area of pseudotime with a celldensity less than the mean, we increase the window. 
+    #If it's an area of high density, we decrease the window
+    window_vector <- window * (1 - ( ( hist_output$counts- alt_hist_mean ) / max(hist_output$counts)) )
+    
+  }
+  
+  else{
+    window_vector <- rep(window,length(node_pseudo[,1]))
+  }
+  
+  print(window_vector)
+ 
+    node_exp_mtx <- matrix(nrow = 50, ncol = length(node_pseudo[,1]))
+    
+    weight_vector <- c()
+    weight_mtx <- matrix(nrow = length(cell_pseudo[,1]), ncol = length(node_pseudo[,1]))
+    
+    for (cell in 1:length(cell_pseudo[,1])){
+      cell_weight_vector <- c()
+      
+      for (node in 1:length(node_pseudo[,1])){
+        weight <- exp( -1 * ( (cell_pseudo[cell,1] - node_pseudo[node,1])^2 / window_vector[node]^2 ) )
+        cell_weight_vector <- append(cell_weight_vector, weight)
+        
+      }
+      weight_mtx[cell,] <- cell_weight_vector
+      
+    }
+    
+    row.names(weight_mtx) <- row.names(cell_pseudo)
+    colnames(weight_mtx) <- row.names(node_pseudo)
+    
+    
+    #mtx multiplication way
+    node_exp_mtx <- cell_exp_mtx %*% weight_mtx 
+    
+    normalizer <- 1/(colSums(weight_mtx))
+    
+    for (node in 1:length(node_exp_mtx[1,])){
+      node_exp_mtx[,node] <- node_exp_mtx[,node] * normalizer[node]
+    }
+    
+    output[["exp_mtx"]] <- node_exp_mtx
+  
+
+  
+  return(output)
+  
+}
+
 
 #If win size is too low, it creates 0's (not really 0's but very very small numbers) which fucks up everything
 #Pseudotimes are 
@@ -459,10 +530,12 @@ slingshot_align_only_window_de <- function(expr_mtx_1, expr_mtx_2, pseudo_1, pse
 }
 
 
-pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct){
+pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct, all.genes, own.genes = "no"){
   genes <- intersect(row.names(expr_mtx_1), row.names(expr_mtx_2))
   
   final_genes <- genes
+  
+  #print(final_genes)
   
   count_mtx_1 <- 1 - (rowCounts(expr_mtx_1, value = 0) /length(colnames(expr_mtx_1)))
   names(count_mtx_1) <- row.names(expr_mtx_1)
@@ -471,15 +544,29 @@ pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct){
   names(count_mtx_2) <- row.names(expr_mtx_2)
   
   for (i in 1:length(genes)){
-    if(count_mtx_1[genes[i]] < min.pct | count_mtx_2[genes[i]] < min.pct ){
-      final_genes <- final_genes[-i]
+    
+    
+    if (all.genes == T){
+      "all.genes"
+    }
+    
+    else if(count_mtx_1[genes[i]] < min.pct | count_mtx_2[genes[i]] < min.pct ){
+      final_genes <- final_genes[-(which(final_genes == genes[i]))]
       
     }
     
   }
   
-  count_mtx_1 <- count_mtx_1[final_genes]
-  count_mtx_2 <- count_mtx_2[final_genes]
+  if(own.genes == "no"){
+    count_mtx_1 <- count_mtx_1[final_genes]
+    count_mtx_2 <- count_mtx_2[final_genes]
+  }
+  
+  else{
+    count_mtx_1 <- count_mtx_1[own.genes]
+    count_mtx_2 <- count_mtx_2[own.genes]
+  }
+  
   
   return(list(count_mtx_1, count_mtx_2))
 }
@@ -1175,7 +1262,7 @@ commonID <- function(captures, clusters){
     cluster_c <- clusters[captures[[i]],]
     
     occurence <- table(cluster_c)
-    print(table(cluster_c))
+    #print(table(cluster_c))
 
     choice <- names(occurence)[which(occurence == max(occurence))]
     
@@ -1189,14 +1276,9 @@ commonID <- function(captures, clusters){
       choice <- "None"
     }
     
-    print(choice)
+    #print(choice)
     
     output[names(captures)[i],1] <- choice
-      
-  
-    
-    print("")
-    
     
   }
   
@@ -1219,15 +1301,15 @@ slingshot_node_maker <- function(sce_obj, slingshot_obj, total_nodes, prefix, di
     #print(max_pseudo)
     
     #Get pseudotime of nodes
-    interval <- max_pseudo / total_nodes[lineage]
+    interval <- max_pseudo / (total_nodes[lineage] + 1)
     #print(interval)
-    node_pseudotime_vector <- c(0)
+    node_pseudotime_vector <- c(interval)
     #Include 0 as a node but not the maximum
     for (node in 2:total_nodes[lineage]){ 
       node_pseudotime_vector <- append(node_pseudotime_vector, (node_pseudotime_vector[(node-1)] + interval))
     }
     
-    node_names <- paste0(prefix ,seq(1, total_nodes[lineage], 1) )
+    node_names <- paste0(prefix, "_" ,seq(1, total_nodes[lineage], 1) )
     
     #make the tree
     node_tree <- data.frame("Child", "Parent")
@@ -1253,6 +1335,61 @@ slingshot_node_maker <- function(sce_obj, slingshot_obj, total_nodes, prefix, di
     output[[paste0("lineage_", lineage, "_pseudotime")]] <- node_pseudotime
     
   }
+  
+  return(output)
+}
+
+#Creates nodes across the trajectory, 
+#nodePseudotime <- function(sce_obj, slingshot_obj, total_nodes, prefix, dims, id){
+nodePseudotime <- function(cell_pseudotime,cell_ID, total_nodes, prefix){
+  #We don't need to give the nodes a place on the phate map, they just need pseudotimes to do pseudobulk or cellalign
+  output <- list()
+  
+  
+    #pseudotime <- data.frame(sce_obj@colData@rownames,sce_obj@colData@listData[["pseudotime"]])
+    pseudotime <- cell_pseudotime
+    
+    pseudotime <- pseudotime[ order(pseudotime[,1]), ]
+    
+    pseudotime <- as.matrix(pseudotime)
+    
+    max_pseudo <- max(pseudotime[,1], na.rm=T)
+
+
+    #Get pseudotime of nodes
+    interval <- max_pseudo / (total_nodes + 1)
+
+        node_pseudotime_vector <- c(interval)
+    #Include 0 as a node but not the maximum
+    for (node in 2:total_nodes){ 
+      node_pseudotime_vector <- append(node_pseudotime_vector, (node_pseudotime_vector[(node-1)] + interval))
+    }
+    
+    node_names <- paste0(prefix, "_" ,seq(1, total_nodes, 1) )
+    
+    #make the tree
+    node_tree <- data.frame("Child", "Parent")
+    
+    #Don't want to make the last node a parent so we'll stop the loop before then
+    for (node in 1:(length(node_names)-1)){
+      node_tree <- rbind( node_tree , c( node_names[node+1], node_names[node]) )
+    }
+    
+    node_pseudotime <- data.frame(node_pseudotime_vector,row.names=node_names)
+    colnames(node_pseudotime) <- "pseudotime"
+    
+    #Get most common cell type for node
+    captures <- cell_capture(pseudotime, node_pseudotime)
+    node_cluster <- commonID(captures, cell_ID)
+    
+    colnames(node_tree) <- node_tree[1, ]
+    node_tree <- node_tree[-1, ]
+    
+    output[["ID"]] <- node_cluster
+    output[["tree"]] <- node_tree
+    output[["pseudotime"]] <- node_pseudotime
+    
+  
   
   return(output)
 }
@@ -1303,10 +1440,10 @@ fill_mtx <- function(penalty_mtx){
   
 }
 
-ROC_fill_mtx <- function(penalty_mtx, cut_type){
+ROC_fill_mtx <- function(penalty_mtx, cut_type, method){
   
-  penalty_mtx_cp <- penalty_mtx
-  
+  penalty_mtx_cp <- penalty_mtx 
+
   if(cut_type == "minimum"){
     choice <- c(min(penalty_mtx[,1]), min(penalty_mtx[1,]))
     
@@ -1346,7 +1483,7 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type){
     print("end")
     print(end)
     
-    output <- find_start_end(penalty_mtx, start, end)
+    output <- find_start_end(penalty_mtx, start, end, method)
     
     print(output)
     
@@ -1376,14 +1513,14 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type){
   for (i in 2:length(traceback_mtx[,1])){
     
     for (j in 2:length(traceback_mtx[1,])){
-      choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j] - penalty_mtx[(i-1), j] ))
-      choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] - penalty_mtx[i, (j-1)])  )
-      choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j] - penalty_mtx[(i-1), (j-1)] )
-      
+      choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j] - (penalty_mtx[(i-1), j] ) ))
+      choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] - (penalty_mtx[i, (j-1)]) )  )
+      choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j] - (penalty_mtx[(i-1), (j-1)] ) )
+    
       choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j]))
       choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] )  )
       choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j]  )
-      
+  
       final_choice <- min(c(choice1, choice2, choice3))
       
       traceback_mtx[i,j] <- final_choice
@@ -1492,108 +1629,156 @@ ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
 }
 
 #Find optimal starting point, taking into consideration the correlation landscape of the error surface
-find_start_end <- function(penalty_mtx, start, end){
+find_start_end <- function(penalty_mtx, start, end, method){
   
-  #Need to find where to take the slice
-  #determined by finding the maximum index based off the context of the number of metaCells in each condition
-  index_1 <- which(start == max(start))
-  index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )[1]
-  # print("section")
-  # print(start)
-  # print(paste0("index:",index_1))
+  print(start)
+  print(end)
   
-  #get rate of change for the start
-  if(index_1 == 1){
-    slice_1 <- penalty_mtx[,1]
+  if(method == "mean"){
+    cutoff_metric <- function(x){return(mean(x))}
     
   }
   
-  else{
-    slice_1 <- penalty_mtx[1,]
-  }
-  
-  #print(slice_1)
-  
-  distances_1 <- c()
-  
-  for (i in 1:length(slice_1)){
-    distances_1 <- append(distances_1, abs(slice_1[start[index_1]] - slice_1[i]) )
-  }
-  
-  change_v1 <- c()
-  
-  for(i in 2:length(slice_1)){
-    change_v1 <- append(change_v1, abs(slice_1[i]-abs(slice_1[i-1])))
-    
-  }
-
-  #print(distances_1)
-  print("distances")
-  print(distances_1)
-  print("change")
-  print(change_v1)
-  
-  print("dist function")
-  print(dist(slice_1))
-  print("median dist")
-  print(median(dist(slice_1)))
-  
-  print("median cutoff")
-  print(median(change_v1))
-  
-  print("mean cutoff")
-  print(mean(change_v1))
-  
-  #cutoff_1 <- median(change_v1)
-  cutoff_1 <- mean(change_v1)
-  cutoff_1 <- median(dist(slice_1))
-  
-  selection_1 <- slice_1[1:start[index_1]]
-  
-  #print(which(slice_1 < cutoff_1))
-  
-  #print(cutoff_1)
-  
-  start[index_1] <- min(which(distances_1 < cutoff_1))
-  
-  index_2 <- which(end == min(end))
-  index_2 <- which( c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,])) == min(  c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,]))  )     )[1]
-  
-  print(end[index_2])
-  
-  if(index_2 == 1){
-    slice_2 <- penalty_mtx[,length(penalty_mtx[1,])]
+  else if (method == "median"){
+    cutoff_metric <- function(x){return(median(x))}
     
   }
   
-  else{
-    slice_2 <- penalty_mtx[length(penalty_mtx[,1]),]
-  }
+  #If the minimum score start point is at the very first position of the matrix, there is no need to do this step
   
-  distances_2 <- c()
-  
-  for (i in 1:length(slice_1)){
-    distances_2 <- append(distances_2, abs(slice_2[end[index_2]] - slice_2[i]) )
-  }
-  
-  change_v2 <- c()
-  
-  for(i in 2:length(slice_2)){
-    change_v2 <- append(change_v2, abs(slice_2[i]-abs(slice_2[i-1])))
+  if(start[1] != 1 | start[2] != 1 ){
+    #Need to find where to take the slice
+    #determined by finding the maximum index based off the context of the number of metaCells in each condition
+    index_1 <- which(start == max(start))
+    index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )[1]
     
+    index_1 <- which(start != 1)
+    print("")
+    print(start)
+    print(index_1)
+    
+    # print("section")
+    # print(start)
+    # print(paste0("index:",index_1))
+    
+    #get rate of change for the start
+    if(index_1 == 1){
+      slice_1 <- penalty_mtx[,1]
+      
+    }
+    
+    else{
+      slice_1 <- penalty_mtx[1,]
+    }
+    
+    #print(slice_1)
+    
+    distances_1 <- c()
+    
+    for (i in 1:length(slice_1)){
+      distances_1 <- append(distances_1, abs(slice_1[start[index_1]] - slice_1[i]) )
+    }
+    
+    change_v1 <- c()
+    
+    for(i in 2:length(slice_1)){
+      change_v1 <- append(change_v1, abs(slice_1[i]-abs(slice_1[i-1])))
+      
+    }
+    
+    #print(distances_1)
+    # print("distances")
+    # print(distances_1)
+    # print("change")
+    # print(change_v1)
+    # 
+    # print("dist function")
+    # print(dist(slice_1))
+    # print("median dist")
+    # print(median(dist(slice_1)))
+    # 
+    # print("median cutoff")
+    # print(median(change_v1))
+    # 
+    # print("mean cutoff")
+    # print(mean(change_v1))
+    
+    #get histogram of distances from the current start point
+    hist_distance <- hist(distances_1)
+    
+    choices_1 <- which(distances_1 < hist_distance$breaks[2])
+    
+    #cutoff_1 <- median(change_v1)
+    cutoff_1 <- cutoff_metric(change_v1)
+    #cutoff_1 <- cutoff_metric(dist(slice_1))
+    
+    print(paste0("Cut off 1: ", cutoff_1))
+    print(paste0("Cut off 1 distance: ", cutoff_metric(distances_1)))
+    
+    
+    #cutoff_1 <- mean(c(cutoff_metric(change_v1), cutoff_metric(dist(slice_1))))
+    
+    selection_1 <- slice_1[1:start[index_1]]
+    
+    #print(which(slice_1 < cutoff_1))
+    
+    #print(cutoff_1)
+    
+    start[index_1] <- min(which(distances_1 < cutoff_1))
+    start[index_1] <- min(choices_1)
   }
   
-  #cutoff_2 <- median(change_v2)
-  cutoff_2 <- mean(change_v2)
-  cutoff_2 <- median(dist(slice_2))
+  #If the minimum score end point is at the very last position of the matrix, there is no need to do this step
   
-  
-  end[index_2] <- max(which(distances_2 < cutoff_2))
-  
-  #print(max(which(distances_2 < cutoff_2)))
+  if(end[1] != 1 | end[1] != 1){
+    index_2 <- which(end == min(end))
+    index_2 <- which( c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,])) == min(  c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,]))  )     )[1]
+    
+    
+    if(index_2 == 1){
+      slice_2 <- penalty_mtx[,length(penalty_mtx[1,])]
+      
+    }
+    
+    else{
+      slice_2 <- penalty_mtx[length(penalty_mtx[,1]),]
+    }
+    
+    distances_2 <- c()
+    
+    for (i in 1:length(slice_2)){
+      distances_2 <- append(distances_2, abs(slice_2[end[index_2]] - slice_2[i]) )
+    }
+    
+    change_v2 <- c()
+    
+    for(i in 2:length(slice_2)){
+      change_v2 <- append(change_v2, abs(slice_2[i]-abs(slice_2[i-1])))
+      
+    }
+    
+    #cutoff_2 <- median(change_v2)
+    cutoff_2 <- cutoff_metric(change_v2)
+    #cutoff_2 <- cutoff_metric(dist(slice_2))
+    #cutoff_2 <- mean(c(cutoff_metric(change_v2), cutoff_metric(dist(slice_2))))
+    
+    print(paste0("Cut off 2: ", cutoff_2))
+    print(paste0("Cut off 2 distance: ", cutoff_metric(distances_2)))
+    
+    hist_distance <- hist(distances_2)
+    
+    choices_2 <- which(distances_2 < hist_distance$breaks[2])
+    print("hmm")
+    print(hist_distance$breaks[1])
+    print(choices_2)
+    print(distances_2)
+    
+    end[index_2] <- max(which(distances_2 < cutoff_2))
+    end[index_2] <- max(choices_2)
+  }
   
   return(list(start, end))
-  
+
 }
 
 #Successively sums together the scores from our penalty matrix to make the initial row and column for our traceback matrix
@@ -1602,7 +1787,7 @@ own_fib <- function(number_vector){
   
   for (number in 2:length(number_vector)){
     result <- output[(number-1)] + number_vector[number]
-    
+
     output <- append(output, result)
   }
   
@@ -1624,14 +1809,11 @@ own_fib_ROC <- function(number_vector){
   return(output)
 }
 
-traceforward_pathfind <- function(penalty_mtx, cut_type){
+traceforward_pathfind <- function(penalty_mtx, cut_type, method){
   penalty_mtx_cp <- penalty_mtx
-  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type)
-  
+  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type, method)
+
   penalty_mtx_cut <- penalty_mtx[row.names(error_surface), colnames(error_surface)]
-  print("start")
-  print(row.names(error_surface))
-  print(colnames(error_surface))
   
   #add high score ends to error_surface
   error_surface <- rbind(error_surface, rep(1000,length(colnames(error_surface))))
@@ -1727,43 +1909,54 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
     #print("")
   }
   
+  print(loc)
+  
+  
 
-  #add the steps that take us to the final matrix position
-  finish_choice <- c( abs(loc[1] - length(row.names(error_surface))  )-1  , abs(loc[2] - length(colnames(error_surface)) )  -1 ) 
+  #add the steps that take us to the final matrix position if we're not already there
   
-  finish_index <- which(finish_choice == max(finish_choice))
   
-  loc[finish_index] <- loc[finish_index] + 1
   
-  finish_choice[finish_index] <- finish_choice[finish_index] - 1
   
-  last_index_1 <- seq(loc[1], loc[1] + finish_choice[1])
-  last_index_2 <- seq(loc[2], loc[2] + finish_choice[2])
+  if(loc[1] != (length(row.names(error_surface))-1 ) | loc[2] != (length(colnames(error_surface))-1 ) ){
+    finish_choice <- c( abs(loc[1] - length(row.names(error_surface))  )-1  , abs(loc[2] - length(colnames(error_surface)) )  -1 ) 
+    print(finish_choice)
+    finish_index <- which(finish_choice == max(finish_choice))
+    
+    loc[finish_index] <- loc[finish_index] + 1
+    
+    finish_choice[finish_index] <- finish_choice[finish_index] - 1
+    
+    last_index_1 <- seq(loc[1], loc[1] + finish_choice[1])
+    last_index_2 <- seq(loc[2], loc[2] + finish_choice[2])
+    
+    print(last_index_1)
+    print(last_index_2)
+    
+    #print(finish_choice)
+    
+    finish_choice <- finish_choice + 1
+    
+    #print(finish_choice)
+    
+    final_addition <- data.frame(rep(row.names(error_surface)[last_index_1], finish_choice[2]), rep(colnames(error_surface)[last_index_2], finish_choice[1]) )
+    colnames(final_addition) <- colnames(match_frame)
+    #print(final_addition)
+    
+    #print(colnames(match_frame))
+    
+    match_frame <- rbind(match_frame,final_addition)
+    
+    #print(penalty_mtx_cut[last_index_1, last_index_2])
+    
+    score_vector <- append(score_vector , c(penalty_mtx_cut[last_index_1, last_index_2]) )
+    
+    
+  }
   
-  #print(last_index_1)
-  #print(last_index_2)
-  
-  #print(finish_choice)
-  
-  finish_choice <- finish_choice + 1
-  
-  #print(finish_choice)
-  
-  final_addition <- data.frame(rep(row.names(error_surface)[last_index_1], finish_choice[2]), rep(colnames(error_surface)[last_index_2], finish_choice[1]) )
-  colnames(final_addition) <- colnames(match_frame)
-  #print(final_addition)
-  
-  #print(colnames(match_frame))
-  
-  match_frame <- rbind(match_frame,final_addition)
-  
-  #print(penalty_mtx_cut[last_index_1, last_index_2])
-  
-  score_vector <- append(score_vector , c(penalty_mtx_cut[last_index_1, last_index_2]) )
   
   
   output <- data.frame('X' = match_frame[,2],"Y" = match_frame[,1] , score_vector)
-  
   return(output)
   
   
@@ -1772,12 +1965,11 @@ traceforward_pathfind <- function(penalty_mtx, cut_type){
 
 #Traceback from the lowest point on the last row or column
 #If you do that it follows the path of just moving through the minimum like in my first way of finding the path
-traceback_pathfind <- function(penalty_mtx, cut_type){
+traceback_pathfind <- function(penalty_mtx, cut_type, method){
   
   penalty_mtx_cp <- penalty_mtx
-  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type)
-  
-  
+  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type, method)
+
   last_row <- length(error_surface[,1])
   last_column <- length(error_surface[1,])
     
@@ -1907,7 +2099,7 @@ traceback_pathfind <- function(penalty_mtx, cut_type){
     #print("")
     
     if (loc[1] == 2 | loc[2] == 2){
-      print(paste("final: ", c(loc[1], loc[2])))
+      #print(paste("final: ", c(loc[1], loc[2])))
       
       #If we've reached the end of the alignment already then we don't want to add it again
       if(sum(loc) != 2){
@@ -1936,28 +2128,38 @@ traceback_pathfind <- function(penalty_mtx, cut_type){
   output <- data.frame(rev(match_frame[,2]), rev(match_frame[,1]), rev(score_vector))
   colnames(output) <- c("X", "Y")
   
+
   return(output)
   
 }
 
 
-pathfind <- function(penalty_mtx, cut_type){
-  choice_list <- list(traceforward_pathfind(penalty_mtx, cut_type), traceback_pathfind(penalty_mtx, cut_type) )
+pathfind <- function(penalty_mtx, cut_type, method){
+  choice_list <- list(traceforward_pathfind(penalty_mtx, cut_type, method), traceback_pathfind(penalty_mtx, cut_type, method) )
+  
+  print(sum(choice_list[[1]][,3]))
+  print(sum(choice_list[[2]][,3]))
   
   scores <- c(( sum(choice_list[[1]][,3])/length(choice_list[[1]][,3]) ),( sum(choice_list[[2]][,3])/length(choice_list[[2]][,3]) )  )
   
-  #return whichever path has the lowest overall score
+  #return whichever path has the lowest overall score, or if they are equal, a random one
+  if(scores[1] != scores[2]){
+    output <- choice_list[[which(scores == min(scores))]]
+  }
   
-  output <- choice_list[[which(scores == min(scores))]]
+  else{
+    output <- choice_list[[1]]
+  }
+  
   
   return(output)
 }
 
 #Finds the median of the matched and unmatched nodes. Then calculates the difference between each of the matched pairs and these two thresholds
 #If the match is closer to median of the unmatched nodes than the matched nodes, then we designate it to be 'cut' from the alignment
-cut_deviate <- function(alignment, dis_mtx){
+cut_deviate <- function(alignment, dis_mtx, method){
   
-  threshold_output <- get_thresholds(alignment, dis_mtx)
+  threshold_output <- get_thresholds(alignment, dis_mtx, method)
   
   median_match <- threshold_output[[1]]
   median_unmatch <- threshold_output[[2]]
@@ -1977,9 +2179,165 @@ cut_deviate <- function(alignment, dis_mtx){
   
 }
 
+fill_step_mtx <- function(corr_mtx, cut_type, method){
+  
+  corr_mtx_cp <- corr_mtx
+  
+  step_mtx <- matrix(0, nrow = length(row.names(corr_mtx)), ncol = length(colnames(corr_mtx)))
+  
+  step_mtx[1,1] <- corr_mtx[1,1]
+  
+  step_mtx[1,] <- own_fib_ROC(corr_mtx[1,])
+  
+  step_mtx[,1] <- own_fib_ROC(corr_mtx[,1])
+  
+  for (i in 2:length(step_mtx[,1])){
+    
+    for (j in 2:length(step_mtx[1,])){
+      choice1 <- step_mtx[(i-1), j] + ( (corr_mtx[i,j] - corr_mtx[(i-1), j] ))
+      choice2 <- step_mtx[i,(j-1)] + ((corr_mtx[i,j] - corr_mtx[i, (j-1)])  )
+      choice3 <- step_mtx[(i-1),(j-1)] + (corr_mtx[i,j] - corr_mtx[(i-1), (j-1)] )
+      
+      choice1 <- step_mtx[(i-1), j] + ( (corr_mtx[i,j]))
+      choice2 <- step_mtx[i,(j-1)] + ((corr_mtx[i,j] )  )
+      choice3 <- step_mtx[(i-1),(j-1)] + (corr_mtx[i,j]  )
+      
+      final_choice <- min(c(choice1, choice2, choice3))
+      
+      step_mtx[i,j] <- final_choice
+      
+    }
+    
+  }
+  row.names(step_mtx) <- row.names(corr_mtx)
+  colnames(step_mtx) <- colnames(corr_mtx)
+  
+  if(cut_type == "minimum"){
+    choice <- c(min(corr_mtx[,1]), min(corr_mtx[1,]))
+    
+    index_choice <- which(choice == min(choice))
+    
+    if (index_choice == 1){
+      loc <- c(which(corr_mtx[,1] == choice[index_choice]), 1)
+    }
+    
+    else{
+      loc <- c(1, which(corr_mtx[1,] == choice[index_choice]))
+    }
+    
+    start <- loc
+    
+    last_row <- length(corr_mtx[,1])
+    last_column <- length(corr_mtx[1,])
+    
+    #Find minimum at end to start from
+    choice <- c( min( corr_mtx[ last_row , ] ), min( corr_mtx[ , last_column ] ) )
+    
+    index_choice <- which(choice == min(choice))
+    
+    
+    if (index_choice == 1){
+      loc <- c( last_row , which( corr_mtx[ last_row , ] == choice[index_choice] ) )
+    }
+    
+    else{
+      loc <- c( which( corr_mtx[ , last_column ] == choice[index_choice] ), last_column )
+    }
+    
+    end <- loc
+    
+    print("start")
+    print(start)
+    print("end")
+    print(end)
+    
+    output <- find_start_end(corr_mtx, start, end, method)
+    
+    print(output)
+    
+    step_mtx <- step_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
+    
+    
+  }
+  
+  
+  else{
+    loc <- c(1,1)
+    
+    step_mtx <- step_mtx[ loc[1]:length(step_mtx[,1]) , loc[2]:length(step_mtx[1,]) ]
+    
+  }
+  
+  return(step_mtx)
+  
+}
+
+FindAlignment <- function(corr_mtx){
+  
+  step_mtx <- fill_step_mtx(corr_mtx)
+ 
+  choice <- c(min(corr_mtx[,1]), min(corr_mtx[1,]))
+  
+  index_choice <- which(choice == min(choice))
+  
+  if (index_choice == 1){
+    loc <- c(which(corr_mtx[,1] == choice[index_choice]), 1)
+  }
+  
+  else{
+    loc <- c(1, which(corr_mtx[1,] == choice[index_choice]))
+  }
+  
+  start <- loc
+  
+  last_row <- length(corr_mtx[,1])
+  last_column <- length(corr_mtx[1,])
+  
+  #Find minimum at end to start from
+  choice <- c( min( corr_mtx[ last_row , ] ), min( corr_mtx[ , last_column ] ) )
+  
+  index_choice <- which(choice == min(choice))
+  
+  
+  if (index_choice == 1){
+    loc <- c( last_row , which( corr_mtx[ last_row , ] == choice[index_choice] ) )
+  }
+  
+  else{
+    loc <- c( which( corr_mtx[ , last_column ] == choice[index_choice] ), last_column )
+  }
+  
+  end <- loc
+  
+  print("start")
+  print(start)
+  print("end")
+  print(end)
+  
+  output <- find_start_end(corr_mtx, start, end, method)
+  
+  print(output)
+  
+  corr_mtx <- corr_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
+  
+  step_mtx <- step_mtx[ start[1]:start[2], end[1]:end[2] ]
+  
+  
+  
+}
+
 #Gets the thresholds for the cut_deviate() function
-get_thresholds <- function(alignment, penalty_mtx){
+get_thresholds <- function(alignment, penalty_mtx, method){
   match_cost <- c()
+  
+  if(method == "mean"){
+    score_method <- function(x){return(mean(x))}
+    
+  }
+  
+  else if(method == "median"){
+    score_method <- function(x){return(median(x))}
+  }
   
   for (match in 1:length(alignment[,1])){
     loc <- c(which(row.names(penalty_mtx) == alignment[match,2]), which(colnames(penalty_mtx) == alignment[match,1]))
@@ -2002,8 +2360,8 @@ get_thresholds <- function(alignment, penalty_mtx){
   match_cost_unmatched <- as.vector(match_cost_unmatched)
   match_cost_unmatched <- data.frame(score = match_cost_unmatched[which(is.na(match_cost_unmatched) == F )], group = rep("unmatch", length(match_cost_unmatched[which(is.na(match_cost_unmatched) == F )])))
   
-  median_match <- median(match_cost[["score"]])
-  median_unmatch <- median(match_cost_unmatched[["score"]])
+  median_match <- score_method(match_cost[["score"]])
+  median_unmatch <- score_method(match_cost_unmatched[["score"]])
   
   return(list(median_match, median_unmatch, match_cost))
 }
@@ -3103,7 +3461,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
   
   diff <- abs(start_pseudo_choice[1] - start_pseudo_choice[2])
   
-  #print(diff)
+  print(diff)
   
   pseudo_list[[choice_index]][,1] <- pseudo_list[[choice_index]][,1] + diff
   
@@ -3470,8 +3828,10 @@ pseudo_cell_align <- function(cell_pseudo, node_pseudo_new, node_pseudo_old, win
   
   
   kmean_output <- cell_capture(cell_pseudo, node_pseudo_old)
+  
   #Some nodes have no nodes close to it and have to be removed
   index <- which(lengths(kmean_output) != 0)
+  print(index)
   kmean_output <- kmean_output[names(index)]
   node_pseudo_new <- node_pseudo_new[which(node_pseudo_new[,1] %in% names(index)),]
   
@@ -3482,6 +3842,7 @@ pseudo_cell_align <- function(cell_pseudo, node_pseudo_new, node_pseudo_old, win
   align_pseudo <- data.frame(ID = "ID", pseudotime = 0, status = "hi")
   for (i in 1:length(node_pseudo_new[,3])){
     item <- node_pseudo_new[i,3]
+    print(item)
     node <- node_pseudo_new[i,1]
     #print(node)
     if (item == "noalign"){
@@ -3767,7 +4128,7 @@ test_function <- function(list_input, test.use){
 }
 
 #Plot's the output of alignment
-PlotOutput <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
+PlotOutput_old <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
   
   cut_alignment <- alignment[alignment$Status == "match",]
   
@@ -3812,14 +4173,138 @@ PlotOutput <- function(pseudo_1, pseudo_2, ID_1, ID_2, alignment, cond_names){
   
 }
 
+PlotOutput<- function(WT_info, KO_info, alignment){
+  
+  cut_alignment <- alignment[alignment$Status == "match",]
+  
+  unaligned_nodes <- append(row.names(WT_info$pseudotime)[which( !(row.names(WT_info$pseudotime) %in% cut_alignment[,1]) )] , row.names(KO_info$pseudotime)[which( !(row.names(KO_info$pseudotime) %in% cut_alignment[,2]) )] )
+  
+  plot_df <- data.frame("node" = "x", "group" = 0, "pseudotime" = 0, "condition" = "ah", "ID" = "ah")
+  
+  plot_counter <- 1
+  
+  cond_names <- c( str_split( row.names(WT_info$pseudotime)[1], pattern = "_" )[[1]][1]  ,
+                   str_split( row.names(KO_info$pseudotime)[1], pattern = "_" )[[1]][1] )
+  
+  
+  for (i in 1:length(cut_alignment[,1])){
+    plot_df <- rbind(plot_df, data.frame("node" = cut_alignment[i,1], "group" = plot_counter, "pseudotime" = WT_info$pseudotime[cut_alignment[i,1],], "condition" = cond_names[1] , 
+                                         "ID" = WT_info$ID[cut_alignment[i,1],]) )
+    
+    plot_df <- rbind(plot_df, data.frame("node" = cut_alignment[i,2], "group" = plot_counter, "pseudotime" = KO_info$pseudotime[cut_alignment[i,2],], "condition" = cond_names[2] , 
+                                         "ID" = KO_info$ID[cut_alignment[i,2],]) )
+    
+    plot_counter <- plot_counter + 1
+  }
+  
+  #return(plot_df)
+  
+  plot_df <- plot_df[-1,]
+  
+  print(length(unaligned_nodes))
+  print(unaligned_nodes)
+  print(length(seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1)))
+  print(length(c(WT_info$pseudotime[unaligned_nodes,1], KO_info$pseudotime[unaligned_nodes,1])[ is.na(c(WT_info$pseudotime[unaligned_nodes,1], KO_info$pseudotime[unaligned_nodes,1])) == F ]))
+  print(c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )))
+  
+  #add unaligned nodes
+  unaligned_frame <- data.frame("node" = unaligned_nodes,
+                                "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
+                                "pseudotime" = c(WT_info$pseudotime[unaligned_nodes,1], KO_info$pseudotime[unaligned_nodes,1])[ is.na(c(WT_info$pseudotime[unaligned_nodes,1], KO_info$pseudotime[unaligned_nodes,1])) == F ],
+                                "condition" = c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )),
+                                "ID" = c( WT_info$ID[unaligned_nodes[which( grepl(cond_names[1],unaligned_nodes) == T)],], WT_info$ID[unaligned_nodes[which( grepl(cond_names[2],unaligned_nodes) == T)],] ) ) 
+  
+  
+  plot_df <- rbind(plot_df, unaligned_frame)
+  
+  #print(max(plot_df$pseudotime))
+  
+  print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID)) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
+  
+}
+
+windowHeatmap <- function(de_output, top_n, genes = 0){
+  
+  #if genes not supplied, take the top n for each window based on logfc
+  if (genes == 0){
+    
+    #split into -logfc and logfc
+    #Then order logfc
+    cond1_genes <- c()
+    cond2_genes <- c()
+    
+    for (i in 1:length(de_output)){
+      
+      current <- de_output[[i]]
+      current <- subset(current, adj_pval < 0.05)
+      
+      current_cond1 <- subset(current, logfc > 0)
+      current_cond2 <- subset(current, logfc < 0)
+      
+      current_cond1 <- current_cond1[order(current_cond1[,"logfc"], decreasing = T),]
+      current_cond2 <- current_cond2[order(current_cond2[,"logfc"], decreasing = F),]
+      
+      cond1_genes <- append(cond1_genes, current_cond1[1:top_n,"gene_name"])
+      cond2_genes <- append(cond2_genes, current_cond2[1:top_n,"gene_name"])
+      
+      
+    }
+    
+    cond1_genes <- unique(cond1_genes)
+    cond2_genes <- unique(cond2_genes)
+    
+    final_genes <- c(cond1_genes, cond2_genes)
+    
+  }
+  
+  else{
+    
+    final_genes <- genes
+  
+  }
+  
+  heatmap_df <- data.frame("Gene" = "name", "window"= "window", "logfc" = 0, "adj_pval" = 0)
+  heatmap_mtx <- matrix(0, ncol = 1, nrow = length(final_genes))
+  
+  for (i in 1:length(de_output)){
+    current <- de_output[[i]]
+
+    current <- subset(current, gene_name %in% final_genes)
+    
+    heatmap_df <- rbind(heatmap_df, data.frame("Gene" = current[,"gene_name"], "window" = rep(paste0("Window ", i), length(current[,1])), "logfc" = current[,"logfc"] ,
+                                               "adj_pval" = current[,"adj_pval"]))
+    
+    heatmap_mtx <- cbind(heatmap_mtx, current[,"logfc"])
+    
+  }
+  
+  heatmap_mtx <- heatmap_mtx[,-1]
+  row.names(heatmap_mtx) <- current[,"gene_name"]
+  colnames(heatmap_mtx) <- paste0(rep("Window ", length(de_output) ), seq(1, length(de_output), 1))
+    
+  
+  heatmap_df <- heatmap_df[-1,]
+  
+  heatmap_df[,"Gene"] <- factor(heatmap_df[,"Gene"], levels = rev(final_genes))
+  
+  print(ggplot(data =heatmap_df, aes(x= window, y =Gene, fill = logfc)) + geom_tile()+scale_fill_gradient2() + labs(x = "") )
+  
+  print(pheatmap::pheatmap(heatmap_mtx, cluster_cols = F, treeheight_row = 0, scale = 'none'))
+  
+  return(list(heatmap_df, heatmap_mtx))
+}
+
+
+
+
 #plot heatmap of gene logfc over windows
-gene_window_heatmap <- function(de_output, conditions = 0, window, top_n, genes = 0){
+gene_window_heatmap <- function(de_output, conditions = 0, window, gene_n, genes_keep = 0){
   
   genes_vector <- c()
   heatmap_cols <-c()
   for (i in 1:length(de_output)){
     genes_vector <- append(genes_vector, de_output[[i]][,"gene_name"])
-    heatmap_cols <- append( heatmap_cols, paste("logfc", i, sep="_") )
+    heatmap_cols <- append( heatmap_cols, paste("Window", i, sep="_") )
     
   }
   
@@ -3832,31 +4317,56 @@ gene_window_heatmap <- function(de_output, conditions = 0, window, top_n, genes 
     
     for (j in 1:length(de_output)){
       
-      if (i %in% de_output[[j]][,"gene_name"]){
-        heatmap_mtx[i,paste("logfc", j, sep="_")] <- de_output[[j]][i,"logfc"]
-        
-      }
-      
-      else{
-        heatmap_mtx[i,paste("logfc", j, sep="_")] <- NA
-        
-      }
+      # if (i %in% de_output[[j]][,"gene_name"]){
+      #   heatmap_mtx[i,paste("logfc", j, sep="_")] <- de_output[[j]][i,"logfc"]
+      # 
+      # }
+      # 
+      # else{
+      #   heatmap_mtx[i,paste("logfc", j, sep="_")] <- NA
+      # 
+      # }
+      heatmap_mtx[i,paste("Window", j, sep="_")] <- de_output[[j]][i,"logfc"]
       
     }
     
   }
   
-  heatmap_melt <- melt(heatmap_mtx)
-  colnames(heatmap_melt) <- c("Gene", "Window", "Logfc")
-  
-  if(genes != 0){
-    heatmap_melt <- heatmap_melt[which(heatmap_melt$Gene %in% genes),]
+  if(genes_keep != 0){
+    heatmap_mtx <- heatmap_mtx[genes_keep,]
     
   }
   
+  heatmap_median <- rowMeans(heatmap_mtx, na.rm = T)
+  names(heatmap_median) <- row.names(heatmap_mtx)
+  
+  heatmap_median_up <- heatmap_median[which(heatmap_median > 0)]
+  heatmap_median_down <- heatmap_median[which(heatmap_median < 0)]
+  
+  heatmap_median_up <- heatmap_median_up[order(heatmap_median_up, decreasing = T)]
+  heatmap_median_down <- heatmap_median_down[order(heatmap_median_down)]
+  
+  #return(list(heatmap_median_up, heatmap_median_down))
+  
+  heatmap_median_up <- heatmap_median_up[1:gene_n]
+  heatmap_median_down <- heatmap_median_down[1:gene_n]
+  
+  heatmap_median_up <- heatmap_median_up[which(is.na(heatmap_median_up) == F)]
+  heatmap_median_down <- heatmap_median_down[which(is.na(heatmap_median_down) == F)]
+  
+  final_genes <- c(names(heatmap_median_up), names(heatmap_median_down))
+
+  heatmap_mtx <- heatmap_mtx[final_genes,]
+  
+  
+  heatmap_melt <- melt(heatmap_mtx)
+  
+  colnames(heatmap_melt) <- c("Gene", "Window", "Logfc")
+  
   #return(heatmap_melt)
   
-  heatmap_melt_subset <- subset(heatmap_melt, Window %in% paste("logfc",window, sep="_") )
+  
+  heatmap_melt_subset <- subset(heatmap_melt, Window %in% paste("Window",window, sep="_") )
   
   #split logfc + and -
   heatmap_melt_pos <- subset(heatmap_melt_subset, Logfc > 0)
@@ -3864,53 +4374,55 @@ gene_window_heatmap <- function(de_output, conditions = 0, window, top_n, genes 
   
   obj_list <- list(heatmap_melt_subset, heatmap_melt_pos, heatmap_melt_neg)
   
+  #return(obj_list)
+  
   #remove NA values
   #heatmap_melt_subset <- heatmap_melt_subset[which(!(is.na(heatmap_melt_subset[,"Logfc"]))),]
   
-  for (i in 1:length(obj_list)){
-    #heatmap_melt <- heatmap_melt[heatmap_melt[,"Gene"] %in% heatmap_melt_subset[,"Gene"],]
-    #heatmap_melt <- heatmap_melt_subset
-    obj_current <- obj_list[[i]]
-    
-    obj_current <- obj_current %>%
-      group_by(Window) %>%
-      slice_max(n = top_n, order_by = abs(Logfc))
-    
-    gene_list <- unique(obj_current$Gene)
-    #heatmap_melt_old <- heatmap_melt
-    
-    obj_current <- heatmap_melt[heatmap_melt$Gene %in%gene_list,]
-    
-    order_frame <- c()
-
-    for ( j in unique(obj_current$Gene) ){
-
-      order_frame[j] <- mean(obj_current[obj_current$Gene == j, "Logfc"], na.rm =T)
-      print(j)
-      print(obj_current[obj_current$Gene == j, "Logfc"])
-      print("")
-    }
-
-    order_frame <- sort(order_frame, decreasing = T)
-
-    obj_current$Gene <- as.factor(as.character(obj_current$Gene) )
-    obj_current$Gene <- factor(obj_current$Gene, levels = names(order_frame))
-    print(length(obj_current$Gene))
-    
-
-    obj_list[[i]] <- obj_current
-    
-    print("")
-    
-    
-  }
+  # for (i in 1:length(obj_list)){
+  #   #heatmap_melt <- heatmap_melt[heatmap_melt[,"Gene"] %in% heatmap_melt_subset[,"Gene"],]
+  #   #heatmap_melt <- heatmap_melt_subset
+  #   obj_current <- obj_list[[i]]
+  #   
+  #   obj_current <- obj_current %>%
+  #     group_by(Window) %>%
+  #     slice_max(n = gene_n, order_by = abs(Logfc))
+  #   
+  #   gene_list <- unique(obj_current$Gene)
+  #   #heatmap_melt_old <- heatmap_melt
+  #   
+  #   obj_current <- heatmap_melt[heatmap_melt$Gene %in%gene_list,]
+  #   
+  #   order_frame <- c()
+  # 
+  #   for ( j in unique(obj_current$Gene) ){
+  # 
+  #     order_frame[j] <- mean(obj_current[obj_current$Gene == j, "Logfc"], na.rm =T)
+  #     print(j)
+  #     print(obj_current[obj_current$Gene == j, "Logfc"])
+  #     print("")
+  #   }
+  # 
+  #   order_frame <- sort(order_frame, decreasing = T)
+  # 
+  #   obj_current$Gene <- as.factor(as.character(obj_current$Gene) )
+  #   obj_current$Gene <- factor(obj_current$Gene, levels = names(order_frame))
+  #   print(length(obj_current$Gene))
+  #   
+  # 
+  #   obj_list[[i]] <- obj_current
+  #   
+  #   print("")
+  #   
+  #   
+  # }
   
 
   #heatmap_melt <- heatmap_melt[heatmap_melt[,"Gene"] %in% heatmap_melt_subset[,"Gene"],]
   #heatmap_melt <- heatmap_melt_subset
   # heatmap_melt_subset <- heatmap_melt_subset%>%
   #   group_by(Window) %>%
-  #   slice_max(n = top_n, order_by = abs(Logfc))
+  #   slice_max(n = gene_n, order_by = abs(Logfc))
   # 
   # gene_list <- unique(heatmap_melt_subset$Gene)
   # print(gene_list)
@@ -3918,11 +4430,55 @@ gene_window_heatmap <- function(de_output, conditions = 0, window, top_n, genes 
   # 
   # heatmap_melt <- heatmap_melt[heatmap_melt$Gene %in%gene_list,]
   
-  #print(ggplot(data =heatmap_melt, aes(x= Window, y =Gene, fill = Logfc)) + geom_tile()+scale_fill_gradient2())
+  print(ggplot(data =heatmap_melt_subset, aes(x= Window, y =Gene, fill = Logfc)) + geom_tile()+scale_fill_gradient2() + labs(x = ""))
   return(obj_list)
   
 }
 
+PlotWindowHeatmap <- function(DE_all, DE_output, DE_genes, n = 50){
+  
+  heatmap_mat <- matrix(0, nrow = length(DE_genes), ncol =  length(DE_output), dimnames = list(c(DE_genes) , paste0("window_", seq(1, length(DE_output), 1)) ) )
+  
+  for (i in 1:length(DE_all)){
+    input_vector <- DE_all[[i]][,"logfc"]
+    
+    heatmap_mat[,i] <-input_vector 
+  }
+  
+  heatmap_mean <- abs(rowMeans(heatmap_mat))
+  
+  names(heatmap_mean) <- DE_genes
+  
+  genes_select <- names(sort(heatmap_mean, decreasing = T))[1:n]
+  
+  heatmap_mat <- heatmap_mat[genes_select,]
+  
+  input_mat <- matrix("", nrow = length( genes_select), ncol =  length(DE_output), dimnames = list(c( genes_select) , paste0("window_", seq(1,  length(DE_output), 1)) ) )
+  
+  #Go through the original matrix and see if the gene is present in the DE table. If so, give it a *
+  
+  for (i in 1:length(DE_all)){
+    
+    for (j in 1:length(genes_select)){
+      
+      if(genes_select[j] %in% DE_output[[i]][,"gene_name"]){
+        
+        input_mat[j,i] <- "*"
+        
+      }
+      
+    }
+    
+  }
+  
+  
+  library(gplots)
+  myColor <- colorRampPalette(c("red", "white", "blue"))(200)
+  return(heatmap.2(heatmap_mat, cellnote = input_mat,Rowv = T, Colv = F, notecex = 2, tracecol = NA, col = myColor, notecol = "black", dendrogram = "none", margin = c(8,8) , keysize = 0.75, key.title = "" , cexRow = 1, scale = "none"))
+  
+  
+  
+}
 
 
 PlotAlignment <- function(alignment, score_mtx){
@@ -3931,14 +4487,33 @@ PlotAlignment <- function(alignment, score_mtx){
   score_mtx <- t(score_mtx)
   score_mtx[as.matrix(cut_alignment[,1:2])] <- NA
   
-  pheatmap::pheatmap(as.matrix(score_mtx), cluster_rows = F, cluster_cols = F, scale="none")
+  myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(200)
+  
+  breaks_plot <- seq(0, max(score_mtx, na.rm=T), (max(score_mtx, na.rm=T)/200))
+  
+  pheatmap::pheatmap(as.matrix(score_mtx), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA, breaks = breaks_plot, color = myColor)
 }
 
 #Assign metaCells based on cell density across pseudotime
 #DE sliding window on cells closet to matched metaCells
 #If the number of cells don't reach a minimum cut off then we include the next match 
 #ALternatively user defines how many unique matches to include in window 
-TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes){
+#Window size is how many windows you want in total
+TrajDE <- function(cell_list, sampleCell_list, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use){
+  
+  if(test_use == "t"){
+    test_function <- function(x,y){t.test(x,y)}
+  }
+  
+  else if (test_use == "wilcox"){
+    test_function <- function(x,y){wilcox.test(x,y)}
+    
+  }
+  
+  else if (test_use == "perm"){
+    test_function <- function(x,y){permTS(x,y)}
+    
+  }
   
   de_genes_output <- list()
   
@@ -3954,17 +4529,17 @@ TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, 
   
   matches <- matches[which(matches$Status == "match"),]
   
+  #return(capture_output)
+  
   #get window size 
   
   match_counter <- 0
-  cells_list <- list(c(), c())
-  
-  multi_match <- c( names(table(matches[,1]))[table(matches[,1])>1], names(table(matches[,2]))[table(matches[,2])>1] )
-  cell_groupings <- list()
+
+  multi_match <- c( names( table(matches[,1]) )[ table(matches[,1])>1 ], names( table(matches[,2]) )[ table(matches[,2])>1 ] )
 
   comparisons <- list()
   
-  #Perform DE
+  #FInd groups for comparisons
   i <- 1
   while ( i < (length(matches[,1]) +1) ){
 
@@ -3973,24 +4548,27 @@ TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, 
     if(current[1] %in% multi_match | current[2] %in% multi_match){
       multi_index <- which(current %in% multi_match)
       
-      cells_list[[multi_index]] <- append(cells_list[[multi_index]], unlist( capture_output[[multi_index]][current[multi_index]]) )
-      
-      other_cells <- capture_output[[3-multi_index]][ matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index] ]
-      
-      cells_list[[3-multi_index]] <- append(cells_list[[3-multi_index]], unlist( other_cells) )
-      
       match_counter <- match_counter + 1
       
-      comparisons <- append(comparisons, list( list(current[multi_index] , matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])))
+      #Depending on which condition has the multi match we assign to the comparisons variable
+      
+      if (multi_index == 1){
+        comparisons <- append(comparisons, list( list(current[multi_index] , matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])))
+        
+      }
+      
+      else{
+        comparisons <- append(comparisons, list( list( matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index] , current[multi_index] )))
+        
+        
+      }
       
       i <- i + length(matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])
       
+
     }
     
     else{
-      
-      cells_list[[1]] <- append(cells_list[[1]], unlist( capture_output[[1]][matches[i,1]]) )
-      cells_list[[2]] <- append(cells_list[[2]], unlist( capture_output[[2]][matches[i,2]]) )
       
       comparisons <- append(comparisons, list( list(matches[i,1], matches[i,2])))
       
@@ -4000,43 +4578,79 @@ TrajDE <- function(cell_list, sampleCell_list, matches ,window_size, min_cells, 
     
   }
   
+  #overlap + n_windows <= matches
+  matches <- length(comparisons)
   
-  number_windows <- floor(length(comparisons)/window_size)
+  total_matches <- ( matches + (overlap * n_windows)  ) - overlap
   
-  #Can't have a window size which is more than half the size of the number of matches
+  #number_matches_per_window <- (length(comparisons) * 2) / number_windows
+  
+  final_comparisons <- c()
+  
+  n_windows_cp <- n_windows
+  
+  for (i in 1:n_windows){
+    length_window <- round(total_matches/n_windows_cp)
+    
+    n_windows_cp <- n_windows_cp - 1
+    total_matches <- total_matches - length_window
+    
+    final_comparisons <- append(final_comparisons, length_window)
+    
+  }
+  
+
+  exp_mtx_list <- list()
   
   match_counter <- 1
   
-  final_comparisons <- c(rep(window_size, number_windows),  (length(comparisons) - (window_size * number_windows) )  ) 
+  comparisons_cp <- comparisons
   
   for (i in 1:length(final_comparisons)){
+    print("")
+    print(i)
+    move <- final_comparisons[i] - overlap
+    
     cells_1 <- c()
     cells_2 <- c()
     
-    for (j in 1:final_comparisons[match_counter]){
-      cells_1 <- append( cells_1, unlist( capture_output[[1]][ comparisons[[j]][[1]] ] )  )
-      cells_2 <- append( cells_2, unlist( capture_output[[2]][ comparisons[[j]][[2]] ] ) )
+    for (j in 1:final_comparisons[i]){
+      print(paste0("j = ", j))
+      print(comparisons[[j]][[1]])
+      cells_1 <- append(cells_1, unlist( capture_output[[1]][ comparisons[[j]][[1]] ] ) )  
+      cells_2 <- append(cells_2, unlist( capture_output[[2]][ comparisons[[j]][[2]] ] ) )
       
     }
-    comparisons <- comparisons[-(1:final_comparisons[match_counter])]
-  
-    expr_mtx_1 <- cell_list[[1]]@assays@data$logcounts[ , cells_1  ]
+   
+    expr_mtx_1 <- cell_list[[1]]@assays@data$logcounts[ , cells_1 ]
     expr_mtx_2 <- cell_list[[2]]@assays@data$logcounts[ , cells_2 ]
-
-    output <- de_metrics_return(expr_mtx_1, expr_mtx_2, logfc, p_val, min.pct, all.genes)
-
+    
+    exp_mtx_list[[i]] <- list(expr_mtx_1, expr_mtx_2)
+    
+    output <- de_metrics_return(expr_mtx_1, expr_mtx_2, logfc, p_val, min.pct, all.genes, test_function, own.genes)
+    
+    #return(output)
+    
     de_genes_output <- append(de_genes_output, list(output))
-
-    match_counter <- match_counter + 1
-
+    
+    match_counter <- match_counter + move
+    
+    comparisons <- comparisons[-(1:move)]
+    
   }
   
-  return(de_genes_output)
+  #return(exp_mtx_list)
+
+  print(final_comparisons)
+  return(list(de_genes_output, exp_mtx_list, capture_output, comparisons_cp))
 }
 
-de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min.pct, all.genes){
+de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min.pct, all.genes, test_function, own.genes = "no"){
   
   gene_list <- intersect(row.names(expr1), row.names(expr2))
+  gene_all <- gene_list
+  
+  print(length(gene_list))
   
   expr1 <- expr1[gene_list,]
   expr2 <- expr2[gene_list,]
@@ -4045,12 +4659,14 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   
   temp <- rowSums(temp)
   
-  gene_list <- names(temp)[which(temp > 0)]
+  if(all.genes == F & own.genes == "no"){
+    gene_list <- names(temp)[which(temp > 0)]
+    expr1 <- expr1[gene_list,]
+    expr2 <- expr2[gene_list,]
+  }
   
-  expr1 <- expr1[gene_list,]
-  expr2 <- expr2[gene_list,]
 
-  pct_output <- pct_calculator(expr1, expr2, min.pct = min.pct )
+  pct_output <- pct_calculator(expr1, expr2, min.pct = min.pct, all.genes, own.genes )
   
   gene_list <-names(pct_output[[1]])
   
@@ -4067,8 +4683,39 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   
   test_result_vector <- c()
   
+  # print(length(logfc_change))
+  # 
+  # print(length(which(logfc_change < logfc_threshold & logfc_change > (-1*logfc_threshold) )))
+  # 
+  if(all.genes == F & own.genes == "no"){
+    gene_list <- gene_list[ -( which(logfc_change < logfc_threshold & logfc_change > (-1*logfc_threshold) ) ) ]
+    
+  }
+  
+  
+  logfc_change <- logfc_change[ gene_list ]
+    
+  pct_output[[1]] <- pct_output[[1]][gene_list]
+  pct_output[[2]] <- pct_output[[2]][gene_list]
+
+  # print(length(gene_list))
+  # 
+  # print("")
+
+  if(all.genes == T & own.genes == "no"){
+    print("help")
+    gene_list <- gene_all
+  }
+  
+  else if(all.genes == F & own.genes != "no"){
+    #print("somebody")
+    gene_list <- own.genes
+  }
+  
+  print(length(gene_list))
+  
   for (gene in gene_list){
-    test_result <- t.test(expr1[gene,], expr2[gene,])
+    test_result <- test_function(expr1[gene,], expr2[gene,])
     
     test_result_vector <- append(test_result_vector, test_result$p.value)
   }
@@ -4077,15 +4724,17 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   
   
   library(stats)
+  #print(length(gene_df[,1]))
   
   gene_df[,3] <- p.adjust(gene_df[,3], method = "bonferroni", length(gene_list))
-  if (all.genes == F){
+  if (all.genes == F & own.genes == "no"){
     #Remove genes with non-significant p-values and logfc not in the threshold
     gene_df <- gene_df[which(gene_df[,3] < pval_threshold),]
     
     gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
   }
- 
+  #print(length(gene_df[,1]))
+   
   return(gene_df) 
 }
 
@@ -4100,7 +4749,7 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
     expr_mtx_1_window <- as.matrix(expr_mtx_1[ , which(colnames(expr_mtx_1) %in% cell_groupings[[1]][[i]]) ])
     expr_mtx_2_window <- as.matrix(expr_mtx_2[ , which(colnames(expr_mtx_2) %in% cell_groupings[[2]][[i]]) ])
     
-    pct_output <- pct_calculator(expr_mtx_1_window, expr_mtx_2_window, min.pct = min.pct )
+    pct_output <- pct_calculator(expr_mtx_1_window, expr_mtx_2_window, min.pct = min.pct, all.genes )
     
     final_genes <-names(pct_output[[1]])
     
@@ -4165,7 +4814,6 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
     }
     
     
-    
     output[[ names(cell_groupings[[1]])[i] ]] <- gene_df
   }
   
@@ -4173,4 +4821,38 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
   
 }
 
+smoothDisMtx <- function(dis_mtx){
+  
+  centre_mtx <- dis_mtx[2:(length(dis_mtx[,1])-1), 2:(length(dis_mtx[1,])-1) ]
+  outer_mtx <- dis_mtx
+  outer_mtx[2:(length(outer_mtx[,1])-1), 2:(length(outer_mtx[1,])-1) ] <- NA
+  
+  index_1 <- c(1, length(dis_mtx[,1]))
+  index_2 <- c(1, length(dis_mtx[1,]))
+  
+  movement_list <- list(data.frame(start = c(1,1,0,0,1,1,1,1) , end = c(1,1,0,0,1,1,1,1)),
+                        data.frame(start = c(0,0,1,1,1,1,1,1) , end = c(0,0,1,1,1,1,1,1) ) )
+  
+  #smooth the centre and the outer
+  for (i in 1:8){
+    print(i)
+    current_mtx <- dis_mtx[ (2-movement_list[[1]][i,1]):( (length(dis_mtx[,1]) -1) - movement_list[[1]][i,2] ) , (2-movement_list[[2]][i,1]):( (length(dis_mtx[1,])-1) - movement_list[[2]][i,2] ) ]
+    print(dim(current_mtx))
+    print(dim(centre_mtx))
+    print(dim(outer_mtx))
+    centre_mtx <- centre_mtx + current_mtx
+    #outer_mtx <- outer_mtx + current_mtx
+    
+  }
+  
+  #divide
+  
+  centre_mtx <- centre_mtx / 9
+  #outer_mtx <- outer_mtx / 8
+  
+  outer_mtx[2:(length(outer_mtx[,1])-1), 2:(length(outer_mtx[1,])-1) ] <- centre_mtx
+  
+  return(outer_mtx)
+  
+}
 
