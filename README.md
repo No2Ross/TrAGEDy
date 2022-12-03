@@ -115,10 +115,39 @@ We can then visualise the changes in pseudotime based on the alignment path
 PlotOutput(WT_tree_new, KO_tree_new , path_cut)
 ```
 
+Finally we adjust the pseudotime of the individual cells based on the new pseudotimes of the interpolated points
+```
+KO_cell_pseudo <- data.frame(KO_sce$slingPseudotime_1, row.names = KO_sce@colData@rownames)
+KO_node_pseudo_new <- data.frame(row.names(adjustedPseudotime$condition_2),adjustedPseudotime$condition_2$pseudotime, adjustedPseudotime$condition_2$alignment, row.names =row.names(adjustedPseudotime$condition_2) )
+KO_node_pseudo <- data.frame( pseudotime = KO_tree$pseudotime, row.names = row.names(KO_tree$pseudotime))
+
+KO_cell_pseudo_new <- pseudo_cell_align(KO_cell_pseudo , KO_node_pseudo_new, KO_node_pseudo, window)
+KO_cell_pseudo_new <- KO_cell_pseudo_new[order(match(row.names(KO_cell_pseudo_new), row.names(KO_cell_pseudo))),]
+
+WT_cell_pseudo <- data.frame(WT_sce$slingPseudotime_1, row.names = WT_sce@colData@rownames)
+WT_node_pseudo_new <- data.frame(row.names(adjustedPseudotime$condition_1),adjustedPseudotime$condition_1$pseudotime, adjustedPseudotime$condition_1$align, row.names =row.names(adjustedPseudotime$condition_1) )
+WT_node_pseudo <- data.frame(pseudotime = WT_tree$pseudotime, row.names = row.names(WT_tree$pseudotime))
+
+WT_cell_pseudo_new <- pseudo_cell_align(WT_cell_pseudo , WT_node_pseudo_new, WT_node_pseudo, window)
+WT_cell_pseudo_new <- WT_cell_pseudo_new[order(match(row.names(WT_cell_pseudo_new), row.names(WT_cell_pseudo))),]
+```
+We save the results back into the object
+```
+KO_sce$oldPseudotime <- KO_sce$slingPseudotime_1
+KO_sce$newPseudotime <- KO_cell_pseudo_new$pseudotime
+WT_sce$oldPseudotime <- WT_sce$slingPseudotime_1
+WT_sce$newPseudotime <- WT_cell_pseudo_new$pseudotime
+KO_sce$Status <- as.factor(KO_cell_pseudo_new$status)
+WT_sce$Status <- as.factor(WT_cell_pseudo_new$status)
+```
 
 #Step 5 - Perform TrajDE
 
 Having found the optimal path, we can then identify what genes are differentially expressed (DE) between the two conditions before they diverge from one another. To do this we utilise a sliding window (akin to soft clustering) where the user defines how many windows of comparison will be made, and how many matched interpolated points will be shared between the windows as it slides across the aligned process. The user can also define what statistical test they would like to use (T test, Mann Whitney U test) and what log fold change or minimum percentage thresholds they would like to use.
+```
+output <- TrajDE(list(WT_sce, KO_sce), list(WT_node_pseudo, KO_node_pseudo), path_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
+```
+
 
 
 
