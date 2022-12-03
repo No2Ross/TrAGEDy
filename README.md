@@ -8,19 +8,48 @@ Using TrAGEDy we can find the common alignment between the two conditions, ident
 
 TrAGEDy can then arrange the cells on a common pseudotime axis in order to pull out genes which are differentially expressed between the conditions at different points in the shared process.
 
+# Installing TrAGEDy
+
+
+
 # Worked Example
 
 To aid in the use of TrAGEDy we have layed out a worked example using a scRNA-seq datasets from Briggs et al, 2020. In this datasets there are cells from the bloodstream form stages of the parasite Tryanosoma brucei under a WT and knockout condition. Under WT conditions, the parasite transitions from a slender to stumpy form, but when the gene ZC3H20 is knocked out, this transition is blocked. 
 
 For simplicity, we will only align the first WT replicate with the ZC3H20 KO dataset. As shown in the TrAGEDy paper, replicates can be aligned with TrAGEDy and merged into one dataset before alignment between the conditions.
 
+We need to library some dependencies before starting TrAGEDy
+
+```
+library(slingshot)
+library(RColorBrewer)
+library(Seurat)
+library(SingleCellExperiment)
+library(phateR)
+library(reticulate)
+use_python("/usr/local/bin/python3.8")
+reticulate::import("phate")
+library(ggplot2)
+library(dplyr)
+library(stats)
+library(stringr)
+library(rgl)
+```
+
 ## Step 1 - Create trajectories 
 
 TrAGEDy makes no assumptions about what Trajectory Inference package is used, it only requires that the trajectories be linear in nature. For this analysis we used Slingshot from Street et al, 2018 to construct a trajectory based off of reduced dimension embeddings from PHATE (Moon et al, ). Before a trajectory is made, the user first needs to supply a vector of genes which will be used to build the trajectory and calculate gene expression dissimilarity scores between the conditions.
 
-## Step 2 - Create interpolated points
+We supply the objects with pseudotime already included, as well as the feature space gene list.
 
-We supply the objects with pseudotime already included, as well as the feature space gene list, so the first step is to create the interpolated points.
+```
+WT_sce <- readRDS("path/to/WT_sce_merged.rds")
+KO_sce <- readRDS("path/to/KO_sce.rds")
+
+features <- read.delim("path/to/WT_ZC3H20_KO_feature_space.csv", sep = ",")[,2]
+```
+
+## Step 2 - Create interpolated points
 
 TrAGEDy uses cellAlign's method for creating interpolated points with some minor adjustments. First, the user decides how many interpolated points will be created across the trajectory and how big the window size should be. We chose 50 interpolated points for our analysis and we wanted the window size to mean adjacent interpolated points had mixes of cells being considered.
 
