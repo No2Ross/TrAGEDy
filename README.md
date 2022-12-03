@@ -20,9 +20,32 @@ TrAGEDy makes no assumptions about what Trajectory Inference package is used, it
 
 #Step 2 - Create interpolated points
 
-The next stage uses cellAlign's method for creating interpolated points with some minor adjustments. First, the user decides how many interpolated points will be created across the trajectory ... A larger window size means interpolated point gene expression will be influenced by more cells further away from it and vice versa. 
+We supply the objects with pseudotime already included, as well as the feature space gene list, so the first step is to create the interpolated points.
+
+TrAGEDy uses cellAlign's method for creating interpolated points with some minor adjustments. First, the user decides how many interpolated points will be created across the trajectory and how big the window size should be. We chose 50 interpolated points for our analysis and we wanted the window size to mean adjacent interpolated points had mixes of cells being considered.
+
+'''
+pseudo_end <- min(c(max(KO_sce$slingPseudotime_1, WT_sce$slingPseudotime_1)))
+window <- pseudo_end / 45
+
+WT_cell_pseudotime <- matrix(WT_sce$slingPseudotime_1, dimnames =list(WT_sce@colData@rownames))
+KO_cell_pseudotime <- matrix(KO_sce$slingPseudotime_1, dimnames =list(KO_sce@colData@rownames))
+WT_ID <- data.frame(WT_sce$cell_type, row.names =WT_sce@colData@rownames)
+KO_ID <- data.frame(KO_sce$cell_type, row.names =KO_sce@colData@rownames)
+
+#Create Interpolated points across pseudotime 
+WT_tree <- nodePseudotime(WT_cell_pseudotime,WT_ID, 50, "WT")
+KO_tree <- nodePseudotime(KO_cell_pseudotime,KO_ID, 50, "KO")
+'''
+
+... A larger window size means interpolated point gene expression will be influenced by more cells further away from it and vice versa. 
 
 As cell density is not uniform across trajectories, it is unwise to apply the same window size to all the interpolated points as this will lead to some interpolated points gene expression only being influenced by a small amount of cells, leading to a unsmooth gene expression profile. TrAGEDy avoids this, by increasing the window size around interpolated points with few cells in it's pseudotime area.
+
+
+'''
+
+'''
 
 
 #Step 3 - Find Alignment path
