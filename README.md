@@ -38,15 +38,30 @@ WT_tree <- nodePseudotime(WT_cell_pseudotime,WT_ID, 50, "WT")
 KO_tree <- nodePseudotime(KO_cell_pseudotime,KO_ID, 50, "KO")
 ```
 
-... A larger window size means interpolated point gene expression will be influenced by more cells further away from it and vice versa. 
-
-As cell density is not uniform across trajectories, it is unwise to apply the same window size to all the interpolated points as this will lead to some interpolated points gene expression only being influenced by a small amount of cells, leading to a unsmooth gene expression profile. TrAGEDy avoids this, by increasing the window size around interpolated points with few cells in it's pseudotime area.
+We then use the window size to get gene expression values for the interpolated points. A larger window size means interpolated point gene expression will be influenced by more cells further away from it and vice versa. As cell density is not uniform across trajectories, it is unwise to apply the same window size to all the interpolated points as this will lead to some interpolated points gene expression only being influenced by a small amount of cells, leading to a unsmooth gene expression profile. TrAGEDy avoids this, by increasing the window size around interpolated points with few cells in it's pseudotime area.
 
 
-'''
+```
+KO_cell_pseudo <- data.frame("ID" = KO_sce@colData@rownames, "pseudo" = KO_sce$slingPseudotime_1)
+KO_node_pseudo <- data.frame("ID" = row.names(KO_tree$pseudotime), "pseudo" = KO_tree$pseudotime$pseudotime)
 
-'''
+WT_cell_pseudo <- data.frame("ID" = WT_sce@colData@rownames, "pseudo" = WT_sce$slingPseudotime_1)
+WT_node_pseudo <- data.frame("ID" = row.names(WT_tree$pseudotime), "pseudo" = WT_tree$pseudotime$pseudotime)
 
+KO_node_pseudotime <- matrix(KO_tree$pseudotime$pseudotime , dimnames = list(row.names(KO_tree$pseudotime)), )
+WT_node_pseudotime <- matrix(WT_tree$pseudotime$pseudotime , dimnames = list(row.names(WT_tree$pseudotime)), )
+
+#Get gene expression values for the interpolated points
+KO_node_exp_mtx <- nodeExpressionEstimate(KO_sce@assays@data@listData$logcounts, KO_node_pseudotime, KO_cell_pseudotime, window, adjust.window = T)
+WT_node_exp_mtx <- nodeExpressionEstimate(WT_sce@assays@data@listData$logcounts, WT_node_pseudotime, WT_cell_pseudotime, window, adjust.window = T)
+```
+
+We then subset the gene expression matrices if the interpolated points to only include genes which are in our feature space
+
+```
+KO_node_exp_mtx  <- KO_node_exp_mtx[ features, ]
+WT_node_exp_mtx <- WT_node_exp_mtx[ features, ]
+```
 
 #Step 3 - Find Alignment path
 
@@ -54,7 +69,54 @@ We next need to find the optimal path through the data. First we find how much d
 
 A common way to find the path through a process is with Dynamic Time Warping (DTW), but DTW requires every point in the process be matched, but for our process being analysed, the WT has cells (stumpy's) that will not be represented in the ZC3H20 KO, and thus matching them together would be nonsensical. TrAGEDy avoids this issue by finding the lowest dissimilarity points at the start and end of the process and cutting out everything that falls outside of it. This means we can apply DTW fully, returing us the optimal path through the data.
 
-#Step 4 - Perform TrajDE
+```
+penalty_mtx <- dis_mtx_calculator(as.matrix(WT_node_exp_mtx), as.matrix(KO_node_exp_mtx), "spearman")
+
+#Find optimal path through the dissimilarity matrix then cut and matches that have high dissimilarity
+path_uncut <- pathfind(penalty_mtx, cut_type = "minimum", method = "mean")
+```
+We can then cut high dissimilarity matches that occur somewhere between the start and end points
+
+```
+path_cut <- cut_deviate(path_uncut, penalty_mtx, method = "mean")
+```
+
+We can then visualise how the alignments look through various means.
+
+The path of the data through the matrix
+
+```
+PlotAlignment(path_cut, penalty_mtx)
+```
+
+or with visualisation of the pseudotime of the interpolated points and their matches
+
+```
+PlotOutput(WT_tree, KO_tree, path_cut)
+```
+
+#Step 4 - Adjust pseudotime of interpolated points and cells
+Using the alignment path, we can then adjust the pseudotimes of the interpolated points, with matched interpolated points having a similar pseudotime value.
+
+```
+adjustedPseudotime <- chunk_node(WT_tree$pseudotime, KO_tree$pseudotime, path_cut)
+
+WT_tree_new <- WT_tree
+WT_tree_new$pseudotime <- data.frame(adjustedPseudotime$condition_1$pseudotime, row.names = row.names(WT_tree$pseudotime) )
+
+KO_tree_new <- KO_tree
+KO_tree_new$pseudotime <- data.frame(adjustedPseudotime$condition_2$pseudotime, row.names = row.names(KO_tree$pseudotime) )
+
+```
+
+We can then visualise the changes in pseudotime based on the alignment path
+
+```
+PlotOutput(WT_tree_new, KO_tree_new , path_cut)
+```
+
+
+#Step 5 - Perform TrajDE
 
 Having found the optimal path, we can then identify what genes are differentially expressed (DE) between the two conditions before they diverge from one another. To do this we utilise a sliding window (akin to soft clustering) where the user defines how many windows of comparison will be made, and how many matched interpolated points will be shared between the windows as it slides across the aligned process. The user can also define what statistical test they would like to use (T test, Mann Whitney U test) and what log fold change or minimum percentage thresholds they would like to use.
 
