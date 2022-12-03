@@ -10,7 +10,10 @@ TrAGEDy can then arrange the cells on a common pseudotime axis in order to pull 
 
 # Installing TrAGEDy
 
-
+To install TrAGEDy, download the 'TrAGEDy_functions.R' script from this github and source it within your R session
+```
+source("/path/to/TrAGEDy_functions.R")
+```
 
 # Worked Example
 
