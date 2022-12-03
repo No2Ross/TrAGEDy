@@ -14,11 +14,11 @@ To aid in the use of TrAGEDy we have layed out a worked example using a scRNA-se
 
 For simplicity, we will only align the first WT replicate with the ZC3H20 KO dataset. As shown in the TrAGEDy paper, replicates can be aligned with TrAGEDy and merged into one dataset before alignment between the conditions.
 
-#Step 1 - Create trajectories 
+## Step 1 - Create trajectories 
 
 TrAGEDy makes no assumptions about what Trajectory Inference package is used, it only requires that the trajectories be linear in nature. For this analysis we used Slingshot from Street et al, 2018 to construct a trajectory based off of reduced dimension embeddings from PHATE (Moon et al, ). Before a trajectory is made, the user first needs to supply a vector of genes which will be used to build the trajectory and calculate gene expression dissimilarity scores between the conditions.
 
-#Step 2 - Create interpolated points
+## Step 2 - Create interpolated points
 
 We supply the objects with pseudotime already included, as well as the feature space gene list, so the first step is to create the interpolated points.
 
@@ -63,7 +63,7 @@ KO_node_exp_mtx  <- KO_node_exp_mtx[ features, ]
 WT_node_exp_mtx <- WT_node_exp_mtx[ features, ]
 ```
 
-#Step 3 - Find Alignment path
+## Step 3 - Find Alignment path
 
 We next need to find the optimal path through the data. First we find how much dissimialtity there is between the interpolated points of the conditions. The user chooses what method of calculating dissimilarity is used (Euclidean distance, Pearson, Spearman) but we recommend Spearman's correlation, as it performed best on the simulated datasets. 
 
@@ -95,7 +95,7 @@ or with visualisation of the pseudotime of the interpolated points and their mat
 PlotOutput(WT_tree, KO_tree, path_cut)
 ```
 
-#Step 4 - Adjust pseudotime of interpolated points and cells
+## Step 4 - Adjust pseudotime of interpolated points and cells
 Using the alignment path, we can then adjust the pseudotimes of the interpolated points, with matched interpolated points having a similar pseudotime value.
 
 ```
@@ -141,7 +141,7 @@ KO_sce$Status <- as.factor(KO_cell_pseudo_new$status)
 WT_sce$Status <- as.factor(WT_cell_pseudo_new$status)
 ```
 
-#Step 5 - Perform TrajDE
+## Step 5 - Perform TrajDE
 
 Having found the optimal path, we can then identify what genes are differentially expressed (DE) between the two conditions before they diverge from one another. To do this we utilise a sliding window (akin to soft clustering) where the user defines how many windows of comparison will be made, and how many matched interpolated points will be shared between the windows as it slides across the aligned process. The user can also define what statistical test they would like to use (T test, Mann Whitney U test) and what log fold change or minimum percentage thresholds they would like to use.
 ```
