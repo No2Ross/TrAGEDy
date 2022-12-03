@@ -1,0 +1,1802 @@
+#Consider having the pseudotime of the first interpolated point not being as 0, and the pseudotime of the last not being as the maximum pseudotime value
+
+#Assigns cells to a node based on euclidean distance for some metric
+#First column is names of individuals
+#Second column is value (pseudotime)
+cell_capture <- function(cell_embed, node_embed){
+  output_list <- list()
+  
+  node_mtx <- t( replicate(length(cell_embed[,1]), node_embed[,1]) )
+  cell_mtx <- replicate( length(node_embed[,1]) , cell_embed[,1])
+  
+  dist_mtx <- ( node_mtx - cell_mtx )^2
+  
+  colnames(dist_mtx) <- row.names(node_embed)
+  row.names(dist_mtx) <- row.names(cell_embed)
+  
+  row_min <- rowMins(dist_mtx)
+  
+  closest_node <- as.matrix(apply( dist_mtx, 1, which.min))
+  
+  for (i in 1:length( colnames(dist_mtx) )){
+    output_list[[colnames(dist_mtx)[i]]] <- row.names(closest_node)[which(closest_node == i)]
+    
+  }
+  
+  return(output_list)
+  
+}
+
+#Estimate gene expression values for the nodes weighted by their euclidean distance in pseudotime to the cells
+cell_align_node_GEV <- function(exp_mtx, node_pseudo, cell_pseudo, window_size){
+  
+  output <- list()
+  
+  for ( lineage in 2:length(cell_pseudo[1,]) ){
+    #node_exp_mtx <- matrix(nrow = length(exp_mtx[,1]), ncol = length(node_pseudo[,1]))
+    node_exp_mtx <- matrix(nrow = 50, ncol = length(node_pseudo[,1]))
+    
+    cell_exp_mtx <- exp_mtx[, which( is.na(cell_pseudo[,lineage]) != T )]
+    cell_pseudo_cut <- cell_pseudo[ which( is.na(cell_pseudo[,lineage]) != T ), ]
+    
+    
+    weight_vector <- c()
+    weight_mtx <- matrix(nrow = length(cell_pseudo_cut[,1]), ncol = length(node_pseudo[,1]))
+    
+    for (cell in 1:length(cell_pseudo_cut[,1])){
+      cell_weight_vector <- c()
+      
+      for (node in 1:length(node_pseudo[,1])){
+        weight <- exp( -1 * ( (cell_pseudo_cut[cell,lineage] - node_pseudo[node,2])^2 / window_size^2 ) )
+        cell_weight_vector <- append(cell_weight_vector, weight)
+        
+      }
+      weight_mtx[cell,] <- cell_weight_vector
+      
+    }
+    
+    row.names(weight_mtx) <- cell_pseudo_cut[,1]
+    colnames(weight_mtx) <- node_pseudo[,1]
+    
+    
+    #mtx multiplication way
+    node_exp_mtx <- cell_exp_mtx %*% weight_mtx 
+    
+    normalizer <- 1/(colSums(weight_mtx))
+    
+    for (node in 1:length(node_exp_mtx[1,])){
+      node_exp_mtx[,node] <- node_exp_mtx[,node] * normalizer[node]
+    }
+    
+    output[[paste("lineage_", lineage, "_exp_mtx")]] <- node_exp_mtx
+    
+  }
+  
+  return(output)
+  
+}
+
+#Estimate gene expression values for the nodes weighted by their euclidean distance in pseudotime to the cells. 
+#Window changes depending on histogram density
+#If the counts at the histogram window for the current node is less than the mean of all the bin counts, we increase the window size. Otherwise we decrease it
+#Option remains to not do that
+nodeExpressionEstimate <- function(cell_exp_mtx, node_pseudo, cell_pseudo, window_size, adjust.window){
+  
+  output <- list()
+  
+  if(adjust.window){
+    #Get window sizes for each node
+    hist_output <- hist(cell_pseudo, breaks = seq(min(cell_pseudo) , max(cell_pseudo), length.out = (length(node_pseudo) + 1 ) ) )
+    
+    #If it's 0, then it won't calculate it
+    #hist_output$counts <- hist_output$counts + 1
+    
+    hist_mean <- mean(hist_output$breaks)
+    
+    alt_hist_mean <- hist_output$counts[min(which(hist_output$breaks > mean(cell_pseudo)))]
+    
+    #If the interpolated point is in an area of pseudotime with a celldensity less than the mean, we increase the window. 
+    #If it's an area of high density, we decrease the window
+    window_vector <- window * (1 - ( ( hist_output$counts- alt_hist_mean ) / max(hist_output$counts)) )
+    
+  }
+  
+  else{
+    window_vector <- rep(window,length(node_pseudo[,1]))
+  }
+  
+  print(window_vector)
+  
+  node_exp_mtx <- matrix(nrow = 50, ncol = length(node_pseudo[,1]))
+  
+  weight_vector <- c()
+  weight_mtx <- matrix(nrow = length(cell_pseudo[,1]), ncol = length(node_pseudo[,1]))
+  
+  for (cell in 1:length(cell_pseudo[,1])){
+    cell_weight_vector <- c()
+    
+    for (node in 1:length(node_pseudo[,1])){
+      weight <- exp( -1 * ( (cell_pseudo[cell,1] - node_pseudo[node,1])^2 / window_vector[node]^2 ) )
+      cell_weight_vector <- append(cell_weight_vector, weight)
+      
+    }
+    weight_mtx[cell,] <- cell_weight_vector
+    
+  }
+  
+  row.names(weight_mtx) <- row.names(cell_pseudo)
+  colnames(weight_mtx) <- row.names(node_pseudo)
+  
+  
+  #mtx multiplication way
+  node_exp_mtx <- cell_exp_mtx %*% weight_mtx 
+  
+  normalizer <- 1/(colSums(weight_mtx))
+  
+  for (node in 1:length(node_exp_mtx[1,])){
+    node_exp_mtx[,node] <- node_exp_mtx[,node] * normalizer[node]
+  }
+  
+  output[["exp_mtx"]] <- node_exp_mtx
+  
+  
+  
+  return(node_exp_mtx)
+  
+}
+
+pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct, all.genes, own.genes = "no"){
+  genes <- intersect(row.names(expr_mtx_1), row.names(expr_mtx_2))
+  
+  final_genes <- genes
+  
+  #print(final_genes)
+  
+  count_mtx_1 <- 1 - (rowCounts(expr_mtx_1, value = 0) /length(colnames(expr_mtx_1)))
+  names(count_mtx_1) <- row.names(expr_mtx_1)
+  
+  count_mtx_2 <- 1 - (rowCounts(expr_mtx_2, value = 0) /length(colnames(expr_mtx_2)))
+  names(count_mtx_2) <- row.names(expr_mtx_2)
+  
+  for (i in 1:length(genes)){
+    
+    
+    if (all.genes == T){
+      "all.genes"
+    }
+    
+    else if(count_mtx_1[genes[i]] < min.pct & count_mtx_2[genes[i]] < min.pct ){
+      final_genes <- final_genes[-(which(final_genes == genes[i]))]
+      
+    }
+    
+  }
+  
+  if(own.genes == "no"){
+    count_mtx_1 <- count_mtx_1[final_genes]
+    count_mtx_2 <- count_mtx_2[final_genes]
+  }
+  
+  else{
+    count_mtx_1 <- count_mtx_1[own.genes]
+    count_mtx_2 <- count_mtx_2[own.genes]
+  }
+  
+  
+  return(list(count_mtx_1, count_mtx_2))
+}
+
+#Seurat way of getting LogFC 
+mean.fxn <- function(x) {
+  return(log(x = rowMeans(x = expm1(x)) + 1, base = 2))
+  
+}
+
+
+
+scale_nodes <- function(exp_mtx_1, exp_mtx_2){
+  
+  max_val <- max( c( max( exp_mtx_1), max(exp_mtx_2) ) )
+  min_val <- min( c( min( exp_mtx_1), min(exp_mtx_2) ) )
+  
+  exp_mtx_1 <- ( exp_mtx_1 - min_val ) / (max_val - min_val)
+  exp_mtx_2 <- ( exp_mtx_2 - min_val ) / (max_val - min_val)
+  
+  #exp_mtx_1 <- ( exp_mtx_1 - min(exp_mtx_1) ) / (max(exp_mtx_1) - min(exp_mtx_1))
+  #exp_mtx_2 <- ( exp_mtx_2 - min(exp_mtx_2) ) / (max(exp_mtx_2) - min(exp_mtx_2))
+  
+  return(list(exp_mtx_1, exp_mtx_2))
+  
+}
+
+
+#Creates nodes across the trajectory, 
+#nodePseudotime <- function(sce_obj, slingshot_obj, total_nodes, prefix, dims, id){
+nodePseudotime <- function(cell_pseudotime,cell_ID, total_nodes, prefix){
+  #We don't need to give the nodes a place on the phate map, they just need pseudotimes to do pseudobulk or cellalign
+  output <- list()
+  
+  
+  #pseudotime <- data.frame(sce_obj@colData@rownames,sce_obj@colData@listData[["pseudotime"]])
+  pseudotime <- cell_pseudotime
+  
+  pseudotime <- pseudotime[ order(pseudotime[,1]), ]
+  
+  pseudotime <- as.matrix(pseudotime)
+  
+  max_pseudo <- max(pseudotime[,1], na.rm=T)
+  
+  
+  #Get pseudotime of nodes
+  interval <- max_pseudo / (total_nodes + 1)
+  
+  node_pseudotime_vector <- c(interval)
+  #Include 0 as a node but not the maximum
+  for (node in 2:total_nodes){ 
+    node_pseudotime_vector <- append(node_pseudotime_vector, (node_pseudotime_vector[(node-1)] + interval))
+  }
+  
+  node_names <- paste0(prefix, "_" ,seq(1, total_nodes, 1) )
+  
+  #make the tree
+  node_tree <- data.frame("Child", "Parent")
+  
+  #Don't want to make the last node a parent so we'll stop the loop before then
+  for (node in 1:(length(node_names)-1)){
+    node_tree <- rbind( node_tree , c( node_names[node+1], node_names[node]) )
+  }
+  
+  node_pseudotime <- data.frame(node_pseudotime_vector,row.names=node_names)
+  colnames(node_pseudotime) <- "pseudotime"
+  
+  #Get most common cell type for node
+  captures <- cell_capture(pseudotime, node_pseudotime)
+  node_cluster <- commonID(captures, cell_ID)
+  
+  colnames(node_tree) <- node_tree[1, ]
+  node_tree <- node_tree[-1, ]
+  
+  output[["ID"]] <- node_cluster
+  output[["tree"]] <- node_tree
+  output[["pseudotime"]] <- node_pseudotime
+  
+  
+  
+  return(output)
+}
+
+#Get the most common cell type for the nodes
+commonID <- function(captures, clusters){
+  
+  output <- data.frame(rep("id", length(names(captures))), row.names= names(captures))
+  
+  name_vector <- c()
+  
+  for (i in 1:length(captures)){
+    cluster_c <- clusters[captures[[i]],]
+    
+    occurence <- table(cluster_c)
+    # print(table(cluster_c))
+    
+    choice <- names(occurence)[which(occurence == max(occurence))]
+    
+    if (length(choice) > 1){
+      # choice <- paste0(choice, collapse = "/")
+      choice <- choice[1]
+      
+    }
+    
+    #If there's no cells near it
+    if(sum(table(cluster_c)) ==0){
+      choice <- "None"
+    }
+    
+    #print(choice)
+    name_vector <- append(name_vector, choice)
+    # output[names(captures)[i],1] <- choice
+    output[i,1] <- choice
+    
+    print(choice)
+    print("")
+    
+  }
+  
+  # multi_which <- which(str_detect(names_vector, "/"))
+  none_which <- which(name_vector == "None")
+  
+  for (i in none_which){
+    name_vector[i] <- unique( c( name_vector[i-1], name_vector[i+1] ) )[1]
+  }
+  
+  # for (i in multi_which){
+  #   choice <- unique(c(names_vector[i-1]))[1]
+  #   
+  # }
+  
+  output[,1] <- name_vector
+  
+  print(occurence)
+  
+  return(output)
+}
+
+dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method){
+  if (dis_method != "euclidean"){
+    dis_matrix <- cor(cbind(exp_mtx1, exp_mtx2), method=dis_method)
+    dis_matrix <- 1- dis_matrix
+    
+  }
+  
+  
+  if (dis_method == "euclidean"){
+    dis_matrix <- as.matrix(dist(rbind(t(exp_mtx1), t(exp_mtx2)), diag = T, upper = T)) 
+    
+  }
+  
+  #process the matrix to remove unnecessary rows and columns
+  dis_matrix <- dis_matrix[ -which( row.names(dis_matrix) %in% colnames(exp_mtx1) ) , ]
+  dis_matrix <- dis_matrix[ , -which( colnames(dis_matrix) %in% colnames(exp_mtx2) ) ]
+  dis_matrix <- as.matrix(dis_matrix)
+  
+  print( pheatmap::pheatmap(as.matrix(t(dis_matrix)), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA) )
+  
+  
+  return(dis_matrix)
+}
+
+
+ROC_fill_mtx <- function(penalty_mtx, cut_type, method){
+  
+  penalty_mtx_cp <- penalty_mtx 
+  
+  if(cut_type == "minimum"){
+    choice <- c(min(penalty_mtx[,1]), min(penalty_mtx[1,]))
+    
+    index_choice <- which(choice == min(choice))
+    
+    if (index_choice == 1){
+      loc <- c(which(penalty_mtx[,1] == choice[index_choice]), 1)
+    }
+    
+    else{
+      loc <- c(1, which(penalty_mtx[1,] == choice[index_choice]))
+    }
+    
+    start <- loc
+    
+    last_row <- length(penalty_mtx[,1])
+    last_column <- length(penalty_mtx[1,])
+    
+    #Find minimum at end to start from
+    choice <- c( min( penalty_mtx[ last_row , ] ), min( penalty_mtx[ , last_column ] ) )
+    
+    index_choice <- which(choice == min(choice))
+    
+    
+    if (index_choice == 1){
+      loc <- c( last_row , which( penalty_mtx[ last_row , ] == choice[index_choice] ) )
+    }
+    
+    else{
+      loc <- c( which( penalty_mtx[ , last_column ] == choice[index_choice] ), last_column )
+    }
+    
+    end <- loc
+    
+    print("start")
+    print(start)
+    print("end")
+    print(end)
+    
+    output <- find_start_end(penalty_mtx, start, end, method)
+    
+    print(output)
+    
+    penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
+    
+    
+  }
+  
+  
+  else{
+    loc <- c(1,1)
+    
+    penalty_mtx <- penalty_mtx[ loc[1]:length(penalty_mtx[,1]) , loc[2]:length(penalty_mtx[1,]) ]
+    
+  }
+  #Above section is if we want to start the scoring matrix from the lowest point of initial alignment, at the moment this doesn't happen
+  
+  
+  traceback_mtx <- matrix(0, nrow = length(row.names(penalty_mtx)), ncol = length(colnames(penalty_mtx)))
+  
+  traceback_mtx[1,1] <- penalty_mtx[1,1]
+  
+  traceback_mtx[1,] <- own_fib_ROC(penalty_mtx[1,])
+  
+  traceback_mtx[,1] <- own_fib_ROC(penalty_mtx[,1])
+  
+  for (i in 2:length(traceback_mtx[,1])){
+    
+    for (j in 2:length(traceback_mtx[1,])){
+      choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j] - (penalty_mtx[(i-1), j] ) ))
+      choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] - (penalty_mtx[i, (j-1)]) )  )
+      choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j] - (penalty_mtx[(i-1), (j-1)] ) )
+      
+      choice1 <- traceback_mtx[(i-1), j] + ( (penalty_mtx[i,j]))
+      choice2 <- traceback_mtx[i,(j-1)] + ((penalty_mtx[i,j] )  )
+      choice3 <- traceback_mtx[(i-1),(j-1)] + (penalty_mtx[i,j]  )
+      
+      final_choice <- min(c(choice1, choice2, choice3))
+      
+      traceback_mtx[i,j] <- final_choice
+      
+    }
+    
+  }
+  row.names(traceback_mtx) <- row.names(penalty_mtx)
+  colnames(traceback_mtx) <- colnames(penalty_mtx)
+  
+  return(traceback_mtx)
+}
+
+ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
+  
+  penalty_mtx_cp <- penalty_mtx
+  
+  if(cut_type == "minimum"){
+    choice <- c(min(penalty_mtx[,1]), min(penalty_mtx[1,]))
+    
+    index_choice <- which(choice == min(choice))
+    
+    if (index_choice == 1){
+      loc <- c(which(penalty_mtx[,1] == choice[index_choice]), 1)
+    }
+    
+    else{
+      loc <- c(1, which(penalty_mtx[1,] == choice[index_choice]))
+    }
+    
+    start <- loc
+    
+    last_row <- length(penalty_mtx[,1])
+    last_column <- length(penalty_mtx[1,])
+    
+    #Find minimum at end to start from
+    choice <- c( min( penalty_mtx[ last_row , ] ), min( penalty_mtx[ , last_column ] ) )
+    
+    index_choice <- which(choice == min(choice))
+    
+    
+    if (index_choice == 1){
+      loc <- c( last_row , which( penalty_mtx[ last_row , ] == choice[index_choice] ) )
+    }
+    
+    else{
+      loc <- c( which( penalty_mtx[ , last_column ] == choice[index_choice] ), last_column )
+    }
+    
+    end <- loc
+    
+    print("start")
+    print(start)
+    print("end")
+    print(end)
+    
+    output <- find_start_end(penalty_mtx, start, end)
+    
+    penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
+    
+    
+  }
+  
+  
+  else{
+    loc <- c(1,1)
+    
+    penalty_mtx <- penalty_mtx[ loc[1]:length(penalty_mtx[,1]) , loc[2]:length(penalty_mtx[1,]) ]
+    
+  }
+  #Above section is if we want to start the scoring matrix from the lowest point of initial alignment, at the moment this doesn't happen
+  
+  row_length <- length(penalty_mtx[,1])
+  col_length <- length(penalty_mtx[1,])
+  
+  traceback_mtx <- matrix(0, nrow = length(row.names(penalty_mtx)), ncol = length(colnames(penalty_mtx)))
+  
+  traceback_mtx[row_length,col_length] <- penalty_mtx[row_length, col_length]
+  
+  traceback_mtx[row_length,] <- own_fib_ROC(penalty_mtx[row_length,])
+  
+  traceback_mtx[,col_length] <- own_fib_ROC(penalty_mtx[,col_length])
+  
+  for (i in ( length(traceback_mtx[,1]) -1):1){
+    
+    for (j in ( length(traceback_mtx[1,]) -1):1){
+      choice1 <- traceback_mtx[(i+1), j] + ( (penalty_mtx[i,j] - penalty_mtx[(i+1), j] ))
+      choice2 <- traceback_mtx[i,(j+1)] + ((penalty_mtx[i,j] - penalty_mtx[i, (j+1)])  )
+      choice3 <- traceback_mtx[(i+1),(j+1)] + (penalty_mtx[i,j] - penalty_mtx[(i+1), (j+1)] )
+      
+      choice1 <- traceback_mtx[(i+1), j] + ( (penalty_mtx[i,j]))
+      choice2 <- traceback_mtx[i,(j+1)] + ((penalty_mtx[i,j] )  )
+      choice3 <- traceback_mtx[(i+1),(j+1)] + (penalty_mtx[i,j]  )
+      
+      final_choice <- min(c(choice1, choice2, choice3))
+      
+      traceback_mtx[i,j] <- final_choice
+      
+    }
+    
+  }
+  row.names(traceback_mtx) <- row.names(penalty_mtx)
+  colnames(traceback_mtx) <- colnames(penalty_mtx)
+  
+  return(traceback_mtx)
+}
+
+#Find optimal starting point, taking into consideration the correlation landscape of the error surface
+find_start_end <- function(penalty_mtx, start, end, method){
+  
+  print(start)
+  print(end)
+  
+  if(method == "mean"){
+    cutoff_metric <- function(x){return(mean(x))}
+    
+  }
+  
+  else if (method == "median"){
+    cutoff_metric <- function(x){return(median(x))}
+    
+  }
+  
+  #If the minimum score start point is at the very first position of the matrix, there is no need to do this step
+  
+  if(start[1] != 1 | start[2] != 1 ){
+    #Need to find where to take the slice
+    #determined by finding the maximum index based off the context of the number of metaCells in each condition
+    # index_1 <- which(start == max(start))
+    # index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )[1]
+    # 
+    index_1 <- which(start != 1)
+    print("")
+    print(start)
+    print(index_1)
+    
+    # print("section")
+    # print(start)
+    # print(paste0("index:",index_1))
+    
+    #get rate of change for the start
+    if(index_1 == 1){
+      slice_1 <- penalty_mtx[,1]
+      
+    }
+    
+    else{
+      slice_1 <- penalty_mtx[1,]
+    }
+    
+    #print(slice_1)
+    
+    distances_1 <- c()
+    
+    for (i in 1:length(slice_1)){
+      distances_1 <- append(distances_1, abs(slice_1[start[index_1]] - slice_1[i]) )
+    }
+    
+    change_v1 <- c()
+    
+    for(i in 2:length(slice_1)){
+      change_v1 <- append(change_v1, abs(slice_1[i]-abs(slice_1[i-1])))
+      
+    }
+    
+    #print(distances_1)
+    # print("distances")
+    # print(distances_1)
+    # print("change")
+    # print(change_v1)
+    # 
+    # print("dist function")
+    # print(dist(slice_1))
+    # print("median dist")
+    # print(median(dist(slice_1)))
+    # 
+    # print("median cutoff")
+    # print(median(change_v1))
+    # 
+    # print("mean cutoff")
+    # print(mean(change_v1))
+    
+    #get histogram of distances from the current start point
+    hist_distance <- hist(distances_1)
+    
+    choices_1 <- which(distances_1 < hist_distance$breaks[2])
+    
+    #cutoff_1 <- median(change_v1)
+    cutoff_1 <- cutoff_metric(change_v1)
+    #cutoff_1 <- cutoff_metric(dist(slice_1))
+    
+    print(paste0("Cut off 1: ", cutoff_1))
+    print(paste0("Cut off 1 distance: ", cutoff_metric(distances_1)))
+    
+    
+    #cutoff_1 <- mean(c(cutoff_metric(change_v1), cutoff_metric(dist(slice_1))))
+    
+    selection_1 <- slice_1[1:start[index_1]]
+    
+    #print(which(slice_1 < cutoff_1))
+    
+    #print(cutoff_1)
+    
+    start[index_1] <- min(which(distances_1 < cutoff_1))
+    start[index_1] <- min(choices_1)
+  }
+  
+  #If the minimum score end point is at the very last position of the matrix, there is no need to do this step
+  
+  if(end[1] != 1 | end[1] != 1){
+    index_2 <- which(end == min(end))
+    index_2 <- which( c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,])) == min(  c(end[1]/length(penalty_mtx[,1]), end[2]/length(penalty_mtx[1,]))  )     )[1]
+    
+    
+    if(index_2 == 1){
+      slice_2 <- penalty_mtx[,length(penalty_mtx[1,])]
+      
+    }
+    
+    else{
+      slice_2 <- penalty_mtx[length(penalty_mtx[,1]),]
+    }
+    
+    distances_2 <- c()
+    
+    for (i in 1:length(slice_2)){
+      distances_2 <- append(distances_2, abs(slice_2[end[index_2]] - slice_2[i]) )
+    }
+    
+    change_v2 <- c()
+    
+    for(i in 2:length(slice_2)){
+      change_v2 <- append(change_v2, abs(slice_2[i]-abs(slice_2[i-1])))
+      
+    }
+    
+    #cutoff_2 <- median(change_v2)
+    cutoff_2 <- cutoff_metric(change_v2)
+    #cutoff_2 <- cutoff_metric(dist(slice_2))
+    #cutoff_2 <- mean(c(cutoff_metric(change_v2), cutoff_metric(dist(slice_2))))
+    
+    print(paste0("Cut off 2: ", cutoff_2))
+    print(paste0("Cut off 2 distance: ", cutoff_metric(distances_2)))
+    
+    hist_distance <- hist(distances_2)
+    
+    choices_2 <- which(distances_2 < hist_distance$breaks[2])
+    print("hmm")
+    print(hist_distance$breaks[1])
+    print(choices_2)
+    print(distances_2)
+    
+    end[index_2] <- max(which(distances_2 < cutoff_2))
+    end[index_2] <- max(choices_2)
+  }
+  
+  return(list(start, end))
+  
+}
+
+#Successively sums together the scores from our penalty matrix to make the initial row and column for our traceback matrix
+own_fib_ROC <- function(number_vector){
+  output <- c(number_vector[1])
+  
+  for (number in 2:length(number_vector)){
+    result <- output[(number-1)] + (number_vector[number] - number_vector[(number-1)]) 
+    
+    result <- output[(number-1)] + (number_vector[number]) 
+    
+    output <- append(output, result)
+  }
+  
+  return(output)
+}
+
+traceforward_pathfind <- function(penalty_mtx, cut_type, method){
+  penalty_mtx_cp <- penalty_mtx
+  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type, method)
+  
+  penalty_mtx_cut <- penalty_mtx[row.names(error_surface), colnames(error_surface)]
+  
+  #add high score ends to error_surface
+  error_surface <- rbind(error_surface, rep(1000,length(colnames(error_surface))))
+  error_surface <- cbind(error_surface, rep(1000,length(row.names(error_surface))))
+  
+  #Find minimum at end to start from
+  choice <- c( min( error_surface[ 1 , ] ), min( error_surface[ , 1 ] ) )
+  #print(choice)
+  
+  index_choice <- which(choice == min(choice))
+  
+  if (index_choice == 1){
+    loc <- c( 1 , which( error_surface[ 1 , ] == choice[index_choice] ) )
+  }
+  
+  else{
+    loc <- c( which( error_surface[ , 1 ] == choice[index_choice] ), 1 )
+  }
+  
+  loc <- c(1,1)
+  
+  #diag, vertical, horizontal
+  movement_frame <- data.frame(cond_1 = c(1, 1, 0), cond_2 = c(1, 0, 1))
+  
+  match_frame <- data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])
+  
+  score_vector <- c(error_surface[loc[1], loc[2]])
+  score_vector <- c(penalty_mtx_cut[loc[1], loc[2]])
+  
+  
+  previous_choice <- 1
+  
+  x <- T
+  
+  while (x == T){
+    choice_vector <- c(error_surface[loc[1]+1, loc[2]+1], error_surface[loc[1]+1 , loc[2]], error_surface[loc[1], loc[2]+1]  )
+    
+    choice <- which(choice_vector == min(choice_vector))
+    # print(loc)
+    #print(paste0("Choice: ", choice))
+    # print(paste0("Previous choice: ", previous_choice))
+    #print(paste0("Matrix location: ",loc))
+    #print(error_surface[loc[1], loc[2]])
+    #print("")
+    if (choice %in% c(2,3)){
+      temp_loc <- loc + as.numeric(movement_frame[choice,])
+      
+      temp_choice_vector <- c(error_surface[temp_loc[1]+1, temp_loc[2]+1], error_surface[temp_loc[1]+1 , temp_loc[2]], error_surface[temp_loc[1], temp_loc[2]+1]  )
+      
+      temp_choice <- which(temp_choice_vector == min(temp_choice_vector))
+      #print(paste0("temp_choice: ", temp_choice))
+      if ( !(temp_choice %in% c(choice,1)) ){
+        #print("in")
+        loc <- loc + c(1,1)
+        
+        choice <- 1
+        
+        match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
+        
+        score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
+        
+      }
+      
+      else{
+        loc <- loc + as.numeric(movement_frame[choice,])
+        
+        match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
+        
+        score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
+        
+      }
+      
+    }
+    
+    else{
+      loc <- loc + as.numeric(movement_frame[choice,])
+      
+      match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
+      
+      score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
+      
+      
+    }
+    
+    #Exit when we reach the end of one of the processes
+    if (loc[1] == (length(error_surface[,1])-1) | loc[2] == (length(error_surface[1,])-1) ){
+      x <- F
+    }
+    
+    #print(loc[2] == length(error_surface[1,]))
+    
+    previous_choice <- choice
+    #print("")
+  }
+  
+  print(loc)
+  
+  
+  
+  #add the steps that take us to the final matrix position if we're not already there
+  
+  
+  
+  
+  if(loc[1] != (length(row.names(error_surface))-1 ) | loc[2] != (length(colnames(error_surface))-1 ) ){
+    finish_choice <- c( abs(loc[1] - length(row.names(error_surface))  )-1  , abs(loc[2] - length(colnames(error_surface)) )  -1 ) 
+    print(finish_choice)
+    finish_index <- which(finish_choice == max(finish_choice))
+    
+    loc[finish_index] <- loc[finish_index] + 1
+    
+    finish_choice[finish_index] <- finish_choice[finish_index] - 1
+    
+    last_index_1 <- seq(loc[1], loc[1] + finish_choice[1])
+    last_index_2 <- seq(loc[2], loc[2] + finish_choice[2])
+    
+    print(last_index_1)
+    print(last_index_2)
+    
+    #print(finish_choice)
+    
+    finish_choice <- finish_choice + 1
+    
+    #print(finish_choice)
+    
+    final_addition <- data.frame(rep(row.names(error_surface)[last_index_1], finish_choice[2]), rep(colnames(error_surface)[last_index_2], finish_choice[1]) )
+    colnames(final_addition) <- colnames(match_frame)
+    #print(final_addition)
+    
+    #print(colnames(match_frame))
+    
+    match_frame <- rbind(match_frame,final_addition)
+    
+    #print(penalty_mtx_cut[last_index_1, last_index_2])
+    
+    score_vector <- append(score_vector , c(penalty_mtx_cut[last_index_1, last_index_2]) )
+    
+    
+  }
+  
+  
+  
+  output <- data.frame('X' = match_frame[,2],"Y" = match_frame[,1] , score_vector)
+  return(output)
+  
+  
+}
+
+
+#Traceback from the lowest point on the last row or column
+#If you do that it follows the path of just moving through the minimum like in my first way of finding the path
+traceback_pathfind <- function(penalty_mtx, cut_type, method){
+  
+  penalty_mtx_cp <- penalty_mtx
+  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type, method)
+  
+  last_row <- length(error_surface[,1])
+  last_column <- length(error_surface[1,])
+  
+  factor <- -1 
+  
+  penalty_mtx_cut <- penalty_mtx[row.names(error_surface), colnames(error_surface)]
+  
+  
+  #Find minimum at end to start from
+  choice <- c( min( error_surface[ last_row , ] ), min( error_surface[ , last_column ] ) )
+  print(choice)
+  
+  index_choice <- which(choice == min(choice))
+  
+  if (index_choice == 1){
+    loc <- c( last_row , which( error_surface[ last_row , ] == choice[index_choice] ) )
+  }
+  
+  else{
+    loc <- c( which( error_surface[ , last_column ] == choice[index_choice] ), last_column )
+  }
+  
+  loc <- c(last_row, last_column)
+  
+  match_frame <- data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])
+  
+  score_vector <- c(penalty_mtx_cut[loc[1], loc[2]])
+  
+  diag <- error_surface[(loc[1]+factor), (loc[2]+factor)]
+  vertical <- error_surface[(loc[1]+factor), loc[2]]
+  horizontal <- error_surface[loc[1], (loc[2]+factor)]
+  
+  options <- c(diag, vertical, horizontal)
+  
+  move_choice <- which( options == min(options) )
+  
+  #print(move_choice)
+  
+  previous_choice = move_choice
+  
+  if (1 == move_choice){
+    loc <- loc + factor
+    #print("diag")
+  }
+  
+  else if (2 == move_choice){
+    loc[1] <- loc[1] + factor
+    #print("vertical")
+  }
+  
+  else{
+    loc[2] <- loc[2] + factor
+    #print("horizontal")
+  }
+  
+  #print(paste("match: ", c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])))
+  
+  match_frame <- rbind(match_frame, c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
+  score_vector <- append(score_vector,penalty_mtx_cut[loc[1], loc[2]])
+  
+  x <- T
+  counter <- 1
+  while (x == T){
+    #print(loc)
+    #Three movement options
+    #1. Diagonally - a 1 to 1 match
+    #2 vertically - a many to 1 match 
+    #3 horizontally a many to 1 match (but to a different tree from above)
+    
+    diag <- error_surface[(loc[1]+factor), (loc[2]+factor)]
+    vertical <- error_surface[(loc[1]+factor), loc[2]]
+    horizontal <- error_surface[loc[1], (loc[2]+factor)]
+    
+    options <- c(diag, vertical, horizontal)
+    
+    #print(paste("diag: ", diag))
+    #print(paste("horizontal: ", horizontal))
+    #print(paste("vertical: ", vertical))
+    #print(options)
+    
+    move_choice <- which( options == min(options, na.rm=T) )
+    
+    #print(paste("move_choice:" , c("diag", "vertical", "horizontal")[move_choice]))
+    #print("")
+    
+    #Stops us from creating a massive chain of aligned cells between the two processes
+    if ((move_choice + previous_choice) == 5 ){
+      
+      #We want to move diagonally, but not for the next move, but for the move we just made, so we retroactively change the previous result.
+      match_frame <- match_frame[-length(match_frame[,1]),]
+      score_vector <- score_vector[-length(score_vector)]
+      
+      if(move_choice == 2){
+        loc[2] <- loc[2] - factor
+      }
+      
+      else{
+        loc[1] <- loc[1] - factor
+      }
+      
+      move_choice <- 1
+      
+    }
+    
+    if (1 == move_choice){
+      loc <- loc + factor
+      #print("diag")
+    }
+    
+    else if (2 == move_choice){
+      loc[1] <- loc[1] + factor
+      #print("vertical")
+    }
+    
+    else{
+      loc[2] <- loc[2] + factor
+      #print("horizontal")
+    }
+    
+    #print(paste("match: ", c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])))
+    
+    match_frame <- rbind(match_frame, c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
+    score_vector <- append(score_vector,penalty_mtx_cut[loc[1], loc[2]])
+    
+    previous_choice <- move_choice
+    
+    #print("")
+    
+    if (loc[1] == 2 | loc[2] == 2){
+      #print(paste("final: ", c(loc[1], loc[2])))
+      
+      #If we've reached the end of the alignment already then we don't want to add it again
+      if(sum(loc) != 2){
+        
+        loc[1] <- loc[1] + factor
+        loc[2] <- loc[2] + factor
+        
+        final_addition <- cbind(rep(row.names(error_surface)[loc[1]:1], loc[2]) , rep(colnames(error_surface)[loc[2]:1], loc[1]))
+        score_vector <- append(score_vector,penalty_mtx_cut[loc[1]:1, loc[2]:1])
+        
+        #print(final_addition)
+        
+        colnames(final_addition) <- colnames(match_frame)
+        
+        match_frame <- rbind(match_frame, final_addition)
+      }
+      
+      
+      x <- F
+    }
+    #print(options)
+    counter <- counter + 1
+    
+  }
+  
+  output <- data.frame(rev(match_frame[,2]), rev(match_frame[,1]), rev(score_vector))
+  colnames(output) <- c("X", "Y")
+  
+  
+  return(output)
+  
+}
+
+
+pathfind <- function(penalty_mtx, cut_type, method){
+  choice_list <- list(traceforward_pathfind(penalty_mtx, cut_type, method), traceback_pathfind(penalty_mtx, cut_type, method) )
+  
+  print(sum(choice_list[[1]][,3]))
+  print(sum(choice_list[[2]][,3]))
+  
+  scores <- c(( sum(choice_list[[1]][,3])/length(choice_list[[1]][,3]) ),( sum(choice_list[[2]][,3])/length(choice_list[[2]][,3]) )  )
+  
+  #return whichever path has the lowest overall score, or if they are equal, a random one
+  if(scores[1] != scores[2]){
+    output <- choice_list[[which(scores == min(scores))]]
+  }
+  
+  else{
+    output <- choice_list[[1]]
+  }
+  
+  
+  return(output)
+}
+
+#Finds the median of the matched and unmatched nodes. Then calculates the difference between each of the matched pairs and these two thresholds
+#If the match is closer to median of the unmatched nodes than the matched nodes, then we designate it to be 'cut' from the alignment
+cut_deviate <- function(alignment, dis_mtx, method){
+  
+  threshold_output <- get_thresholds(alignment, dis_mtx, method)
+  
+  median_match <- threshold_output[[1]]
+  median_unmatch <- threshold_output[[2]]
+  match_cost <- threshold_output[[3]]
+  
+  
+  score_frame <- data.frame( match_median = abs(match_cost[["score"]] - median_match), unmatch_median = abs(match_cost[["score"]] - median_unmatch) )
+  
+  final_match <- cbind(alignment, rep("match", length(alignment[,1])))
+  
+  final_match[which(score_frame[,1] > score_frame[,2]),4] <- "cut"
+  
+  colnames(final_match) <- c("X", "Y", "Score","Status")
+  
+  #return(score_frame)
+  return(final_match)
+  
+}
+
+
+#Gets the thresholds for the cut_deviate() function
+get_thresholds <- function(alignment, penalty_mtx, method){
+  match_cost <- c()
+  
+  if(method == "mean"){
+    score_method <- function(x){return(mean(x))}
+    
+  }
+  
+  else if(method == "median"){
+    score_method <- function(x){return(median(x))}
+  }
+  
+  for (match in 1:length(alignment[,1])){
+    loc <- c(which(row.names(penalty_mtx) == alignment[match,2]), which(colnames(penalty_mtx) == alignment[match,1]))
+    match_cost <- append(match_cost, penalty_mtx[loc[1], loc[2]])
+    
+  }
+  match_cost <- as.matrix(match_cost)
+  
+  match_cost <- data.frame(score = match_cost, group = rep("match", length(match_cost)))
+  
+  match_cost_unmatched <- penalty_mtx
+  
+  rows <- as.numeric(str_replace(alignment[,2], "Y", ""))
+  cols <- as.numeric(str_replace(alignment[,1], "X", ""))
+  
+  coord <- as.matrix(data.frame(rows, cols))
+  
+  match_cost_unmatched[coord] <- NA
+  
+  match_cost_unmatched <- as.vector(match_cost_unmatched)
+  match_cost_unmatched <- data.frame(score = match_cost_unmatched[which(is.na(match_cost_unmatched) == F )], group = rep("unmatch", length(match_cost_unmatched[which(is.na(match_cost_unmatched) == F )])))
+  
+  median_match <- score_method(match_cost[["score"]])
+  median_unmatch <- score_method(match_cost_unmatched[["score"]])
+  
+  return(list(median_match, median_unmatch, match_cost))
+}
+
+#Permutation t-test function
+permutation_test <- function(group_1, group_2){
+  combination <- c(group_1, group_2)
+  
+  print(length(combination))
+  
+  permutations <- length(combination)/2
+  
+  initial <- mean(group_1) - mean(group_2)
+  
+  perm_test <- c()
+  
+  for (i in 1:permutations){
+    choice <- sample(1:2, 1)
+    
+    if(choice == 1){
+      split_n <- floor(permutations)
+    }
+    
+    else{
+      split_n <- ceiling(permutations)
+    }
+    
+    sample_1 <- sample(combination, split_n)
+    
+    print(sample_1)
+    
+    perm_1 <- combination[which(combination %in% sample_1)]
+    perm_2 <- combination[which(!(combination %in% sample_1))]
+    
+    perm_test <- append(perm_test,( mean(perm_1) - mean(perm_2) ) )
+    
+  }
+  
+  result <- length(which(perm_test >= initial)) / permutations
+  
+  print(result)
+  
+  return(list(initial, perm_test))
+  
+}
+
+
+#Function which estimates variable 2 for set2 based off of variable 2 for set 1 and weighted by the distance between variable 1 for set 1 and set 2.
+cellAlign_function <- function(set1_variable1, set1_variable2, set2_variable1 ,window_size){
+  set1_variable1_mtx <- t( replicate(length(set2_variable1[,1]), set1_variable1[,1]) )
+  set2_variable1_mtx <- replicate( length(set1_variable1[,1]) , set2_variable1[,1])
+  
+  #weight. N x C matrix 
+  weight <-  exp( -1 * ( (set1_variable1_mtx - set2_variable1_mtx)^2 / ((window_size)^2) )) 
+  
+  row.names(weight) <- row.names(set2_variable1)
+  
+  #NxC dot 1xN
+  
+  set2_variable2 <- weight %*% set1_variable2[,2]
+  
+  normalizer <- 1/rowSums(weight)
+  
+  set2_variable2 <- set2_variable2 * normalizer
+  row.names(set2_variable2) <- row.names(weight)
+  
+  return(set2_variable2)
+}
+
+
+chunk_generator <- function(tree){
+  
+  output <- list()
+  
+  previous <- tree[1,4]
+  
+  vector_c <- c(1)
+  
+  list_counter <- 1
+  
+  for (i in 2:length(tree[,1])){
+    
+    current <- tree[i,4]
+    
+    if (current != previous){
+      
+      output[[list_counter]] <- vector_c
+      
+      vector_c <- c()
+      
+      list_counter <- list_counter + 1
+      
+    }
+    
+    vector_c <- append(vector_c, i)
+    
+    previous <- current
+    
+  }
+  
+  output[[list_counter]] <- vector_c
+  
+  return(output)
+  
+}
+
+chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
+  
+  #get list of nodes which are only present on cut parts
+  
+  cut_nodes <- c(unique(tree[tree[,4] == "cut",1]), unique(tree[tree[,4] == "cut",2]))
+  match_nodes <- c(unique(tree[tree[,4] == "match",1]), unique(tree[tree[,4] == "match",2]))
+  
+  cut_nodes <- cut_nodes[ which( !(cut_nodes %in% match_nodes)) ]
+  
+  pseudo_list <- list(cond1_pseudo, cond2_pseudo)
+  
+  cut_tree <- tree[which(tree[,4] != "cut"),]
+  
+  #Initial alignment
+  start_pseudo_choice <- c(pseudo_list[[1]][cut_tree[1,1],1], pseudo_list[[2]][cut_tree[1,2],1])
+  
+  #The trajectory which has the lowest initial pseudotime needs to have their pseudotimes moved up to come in line with the point of 
+  #initial alignment with the other trajectory 
+  
+  choice_index <- which(start_pseudo_choice == min(start_pseudo_choice))[1]
+  
+  diff <- abs(start_pseudo_choice[1] - start_pseudo_choice[2])
+  
+  print(diff)
+  
+  pseudo_list[[choice_index]][,1] <- pseudo_list[[choice_index]][,1] + diff
+  
+  #remove the points before the initial alignment 
+  cut_index <- which(tree[,4] == "match")
+  tree <- tree[cut_index[1]:length(tree[,1]),]
+  
+  chunks <- chunk_generator(tree)
+  
+  seperate_ <- function(input){min(input)}
+  
+  for (i in 1:length(chunks)){
+    tree_chunk <- tree[chunks[[i]],]
+    
+    item <- 1
+    
+    unique_nodes <- c(names(table(tree_chunk[,1]))[which(table(tree_chunk[,1])==1)], names(table(tree_chunk[,2]))[which(table(tree_chunk[,2])==1)])
+    
+    MC_choice <- tree_chunk[1,4] == "match"
+    
+    if (MC_choice){
+      
+      while( item != (length(tree_chunk[,1])+1) ){
+        
+        pseudo_choice <- c( pseudo_list[[1]][tree_chunk[item,1],1], pseudo_list[[2]][tree_chunk[item,2],1] )
+        
+        if(pseudo_choice[1] != pseudo_choice[2]){
+          
+          choice_index <- which(pseudo_choice != seperate_(pseudo_choice))
+          
+          diff <- pseudo_choice[3-choice_index] - pseudo_choice[(choice_index)]
+          
+          node_position <- which(row.names(pseudo_list[[choice_index]]) == tree_chunk[item,choice_index])[1]
+          
+          pseudo_list[[choice_index]][node_position:(length(pseudo_list[[choice_index]][,1])),1] <- pseudo_list[[choice_index]][node_position:(length(pseudo_list[[choice_index]][,1])),1] + diff
+          
+          seperate_ <- function(input){min(input)}
+          
+        }
+        
+        #if the item graph is a subset of another larger graph
+        if (!(tree_chunk[item,1] %in% unique_nodes) | !(tree_chunk[item,2] %in% unique_nodes)){
+          
+          #get index of the common node for the multi-matching
+          common_index <- which(!(c(tree_chunk[item,1], tree_chunk[item,2]) %in% unique_nodes))
+          
+          #print(tree_chunk[item,common_index])
+          
+          lower_squish <- pseudo_list[[common_index]][tree_chunk[item,common_index],1]
+          
+          #Find the upper squish value
+          pseudo_position <- which(row.names(pseudo_list[[common_index]]) == tree_chunk[item,common_index]) 
+          
+          tree_chunk_nodes <- tree_chunk[ which(tree_chunk[,common_index] == row.names(pseudo_list[[common_index]])[pseudo_position+1])[1], 1:2]
+          
+          #upper_squish <- min( c( pseudo_list[[1]][ tree_chunk_nodes[[1]] , 1 ], pseudo_list[[2]][ tree_chunk_nodes[[2]] , 1 ] ) )
+          squish_nodes <- tree_chunk[ which(tree_chunk[,common_index]==tree_chunk[item,common_index]) ,(3-common_index)]
+          print(paste0("squish: ", squish_nodes))
+          
+          #Finds the nodes that occur after the final matching in this particular multimatch
+          after_nodes <-c( row.names(pseudo_list[[3-common_index]])[ ( which( row.names(pseudo_list[[3-common_index]]) == squish_nodes[length(squish_nodes)] ) +1 ) ],
+                           row.names(pseudo_list[[common_index]])[pseudo_position+1])
+          
+          #If we're doing a multi-align at the end of the process, there will be no nodes that occur after it to squish between
+          if (is.na(after_nodes) == T){
+            #print("argh")
+            upper_squish <- lower_squish + mean( abs( pseudo_list[[common_index]][,1] - mean(pseudo_list[[common_index]][,1]) ) )
+            
+          }
+          
+          else{
+            upper_squish <- min( c(  pseudo_list[[3-common_index]][after_nodes[1],], pseudo_list[[common_index]][after_nodes[2],] ), na.rm = T )
+            
+          }
+          
+          upper_squish <- upper_squish - ((upper_squish-lower_squish)/ length(squish_nodes))
+          
+          #print(paste0("upper squish", upper_squish))
+          #print(paste0("lower squish", lower_squish))
+          
+          output <- squish_function(values = pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
+          output <- scale_function(pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
+          #print(paste0("output: ", output))
+          diff <- abs(pseudo_list[[3-common_index]][ squish_nodes[length(squish_nodes)] , 1 ] - output[length(output)])
+          
+          pseudo_list[[3-common_index]][squish_nodes,1] <- output
+          
+          #Don't want to pulldown if we've already reached the end of the process we're moving
+          if (!( !( tree[length(tree[,1]),1] %in% squish_nodes ) | !( tree[length(tree[,1]),2]  %in% squish_nodes ) )){
+            pulldown_index <- which(row.names(pseudo_list[[3-common_index]]) == squish_nodes[length(squish_nodes)]) + 1
+            
+            pseudo_list[[3-common_index]][ pulldown_index : length(pseudo_list[[3-common_index]][,1]) , 1] <- pseudo_list[[3-common_index]][ pulldown_index : length(pseudo_list[[3-common_index]][,1]) , 1]  - diff
+            
+          }
+          
+          item <- item + length(squish_nodes) - 1
+          
+        }
+        item <- item + 1
+        
+      }
+      
+    }
+    
+    #If the current chunk is unaligned then we want the next aligned bit to be separated in terms of pseudotime
+    else{
+      seperate_ <- function(input){max(input)}
+    }
+    
+  }
+  
+  matrix_1 <- pseudo_list[[1]]
+  matrix_1 <- data.frame("pseudotime" = matrix_1, alignment = rep("align", length(matrix_1[,1])))
+  
+  matrix_2 <- pseudo_list[[2]]
+  matrix_2 <- data.frame("pseudotime" = matrix_2, alignment = rep("align", length(matrix_2[,1])))
+  
+  matrix_1[which(!(row.names(matrix_1) %in% match_nodes)),2] <- "noalign"
+  matrix_2[which(!(row.names(matrix_2) %in% match_nodes)),2] <- "noalign"
+  
+  return(pseudo_list <- list(condition_1 = matrix_1, condition_2 = matrix_2))
+  
+}
+
+
+#scales values
+scale_function <- function(vals, scale_max, scale_min){
+
+  output <- ( (vals - min(vals)) / (max(vals) - min(vals)) ) *(  (scale_max - scale_min)) + scale_min
+  
+  return(output)
+  
+}
+
+
+squish_function <- function(values, max_lim, min_lim){
+  diff <- abs(min_lim - max_lim)
+  val <- diff / (length(values))
+  output <- c(min_lim)
+  value_progress <- min_lim
+  for (i in 2:length(values)){
+    value_progress <- value_progress + val
+    output <- append(output, value_progress)
+    
+  }
+  
+  
+  return(output)
+  
+}
+
+#Cell pseudotime calculated using the CellAlign function
+#Slightly increase correlation of the new cell pseudotime with the old cell pseudotime (preserves the original order better)
+pseudo_cell_align <- function(cell_pseudo, node_pseudo_new, node_pseudo_old, window_size){
+  
+  cell_pseudo_new <- cellAlign_function(node_pseudo_old, node_pseudo_new, cell_pseudo, window_size)
+  
+  
+  kmean_output <- cell_capture(cell_pseudo, node_pseudo_old)
+  
+  #Some nodes have no nodes close to it and have to be removed
+  index <- which(lengths(kmean_output) != 0)
+  print(index)
+  kmean_output <- kmean_output[names(index)]
+  node_pseudo_new <- node_pseudo_new[which(node_pseudo_new[,1] %in% names(index)),]
+  
+  #return(cell_pseudo_new)
+  
+  #If the closest node to a cell is unaligned, that cell becomes unaligned
+  noalign_pseudo <- data.frame(ID = "ID", pseudotime = 0, status = "hi")
+  align_pseudo <- data.frame(ID = "ID", pseudotime = 0, status = "hi")
+  for (i in 1:length(node_pseudo_new[,3])){
+    item <- node_pseudo_new[i,3]
+    print(item)
+    node <- node_pseudo_new[i,1]
+    #print(node)
+    if (item == "noalign"){
+      df <- data.frame(ID = kmean_output[[node]], pseudotime = cell_pseudo_new[ kmean_output[[node]] , 1], status = "noalign")
+      noalign_pseudo <- rbind(noalign_pseudo, df)
+      
+    }
+    
+    else{
+      #return(kmean_output)
+      df <- data.frame(ID = kmean_output[[node]], pseudotime = cell_pseudo_new[ kmean_output[[node]] , 1], status = "align")
+      align_pseudo <- rbind(align_pseudo, df)
+    }
+    
+  }
+  
+  noalign_pseudo <- noalign_pseudo[-1,]
+  align_pseudo <- align_pseudo[-1,]
+  
+  output <- rbind(noalign_pseudo, align_pseudo)
+  
+  #Keep order of cells the same as it is in the sce and seurat objects
+  output <- output[order(match(output[,1], cell_pseudo[,1])),]
+  output <- output[,-1]
+  
+  return(output)
+}
+
+
+PlotOutput<- function(tree_1, tree_2, alignment){
+  
+  cut_alignment <- alignment[alignment$Status == "match",]
+  
+  unaligned_nodes <- append(row.names(tree_1$pseudotime)[which( !(row.names(tree_1$pseudotime) %in% cut_alignment[,1]) )] , row.names(tree_2$pseudotime)[which( !(row.names(tree_2$pseudotime) %in% cut_alignment[,2]) )] )
+  
+  plot_df <- data.frame("node" = "x", "group" = 0, "pseudotime" = 0, "condition" = "ah", "ID" = "ah")
+  
+  plot_counter <- 1
+  
+  cond_names <- c( str_split( row.names(tree_1$pseudotime)[1], pattern = "_" )[[1]][1]  ,
+                   str_split( row.names(tree_2$pseudotime)[1], pattern = "_" )[[1]][1] )
+  
+  
+  for (i in 1:length(cut_alignment[,1])){
+    plot_df <- rbind(plot_df, data.frame("node" = cut_alignment[i,1], "group" = plot_counter, "pseudotime" = tree_1$pseudotime[cut_alignment[i,1],], "condition" = cond_names[1] , 
+                                         "ID" = tree_1$ID[cut_alignment[i,1],]) )
+    
+    plot_df <- rbind(plot_df, data.frame("node" = cut_alignment[i,2], "group" = plot_counter, "pseudotime" = tree_2$pseudotime[cut_alignment[i,2],], "condition" = cond_names[2] , 
+                                         "ID" = tree_2$ID[cut_alignment[i,2],]) )
+    
+    plot_counter <- plot_counter + 1
+  }
+  
+  #return(plot_df)
+  
+  plot_df <- plot_df[-1,]
+  
+  print(length(unaligned_nodes))
+  print(unaligned_nodes)
+  print(length(seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1)))
+  print(length(c(tree_1$pseudotime[unaligned_nodes,1], tree_2$pseudotime[unaligned_nodes,1])[ is.na(c(tree_1$pseudotime[unaligned_nodes,1], tree_2$pseudotime[unaligned_nodes,1])) == F ]))
+  print(c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )))
+  
+  #add unaligned nodes
+  unaligned_frame <- data.frame("node" = unaligned_nodes,
+                                "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
+                                "pseudotime" = c(tree_1$pseudotime[unaligned_nodes,1], tree_2$pseudotime[unaligned_nodes,1])[ is.na(c(tree_1$pseudotime[unaligned_nodes,1], tree_2$pseudotime[unaligned_nodes,1])) == F ],
+                                "condition" = c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )),
+                                "ID" = c( tree_1$ID[unaligned_nodes[which( grepl(cond_names[1],unaligned_nodes) == T)],], tree_2$ID[unaligned_nodes[which( grepl(cond_names[2],unaligned_nodes) == T)],] ) ) 
+  
+  plot_df <- rbind(plot_df, unaligned_frame)
+  
+  #print(max(plot_df$pseudotime))
+  
+  print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=2) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
+  
+}
+
+
+PlotWindowHeatmap <- function(DE_all, DE_output, DE_genes, rowClus = F, colClus = F ){
+  
+  heatmap_mat <- matrix(0, nrow = length(DE_genes), ncol =  length(DE_output), dimnames = list(c(DE_genes) , paste0("window_", seq(1, length(DE_output), 1)) ) )
+  
+  for (i in 1:length(DE_all)){
+    input_vector <- DE_all[[i]][DE_genes,"logfc"]
+    
+    heatmap_mat[,i] <-input_vector 
+  }
+  
+  input_mat <- matrix("", nrow = length( DE_genes), ncol =  length(DE_output), dimnames = list(c( DE_genes) , paste0("window_", seq(1,  length(DE_output), 1)) ) )
+  
+  #Go through the original matrix and see if the gene is present in the DE table. If so, give it a *
+  
+  for (i in 1:length(DE_all)){
+    
+    for (j in 1:length(DE_genes)){
+      
+      if(DE_genes[j] %in% DE_output[[i]][,"gene_name"]){
+        
+        input_mat[j,i] <- "*"
+        
+      }
+      
+    }
+    
+  }
+  
+  
+  library(gplots)
+  myColor <- colorRampPalette(c("red", "white", "blue"))(200)
+  return(heatmap.2(heatmap_mat, cellnote = input_mat,Rowv = rowClus, Colv = colClus, notecex = 2, tracecol = NA, col = myColor, notecol = "black", cexCol = 1.5 ,margins = c(8,8) ,dendrogram = "none", key.title = "", scale = "none"))
+  
+  
+  
+}
+
+PlotAlignment <- function(alignment, score_mtx){
+  cut_alignment <- alignment[alignment$Status == "match",]
+  
+  score_mtx <- t(score_mtx)
+  score_mtx[as.matrix(cut_alignment[,1:2])] <- NA
+  
+  myColor <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(200)
+  
+  breaks_plot <- seq(0, max(score_mtx, na.rm=T), (max(score_mtx, na.rm=T)/200))
+  
+  return(pheatmap::pheatmap(as.matrix(score_mtx), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA, margins = c(8,8),  breaks = breaks_plot, color = myColor, cexCol = 0.2))
+}
+
+#Assign metaCells based on cell density across pseudotime
+#DE sliding window on cells closet to matched metaCells
+#If the number of cells don't reach a minimum cut off then we include the next match 
+#ALternatively user defines how many unique matches to include in window 
+#Window size is how many windows you want in total
+TrajDE <- function(cell_list, sampleCell_list, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use, correct = T){
+  
+  if(test_use == "t"){
+    test_function <- function(x,y){t.test(x,y)}
+  }
+  
+  else if (test_use == "wilcox"){
+    test_function <- function(x,y){wilcox.test(x,y)}
+    
+  }
+  
+  else if (test_use == "perm"){
+    test_function <- function(x,y){permTS(x,y)}
+    
+  }
+  
+  de_genes_output <- list()
+  
+  capture_output <- list()
+  for (i in 1:2){
+    #Assign cells to the closet metaCell in terms of pseudotime
+    cell_embed <- data.frame(cell_list[[i]]$oldPseudotime, row.names = cell_list[[i]]@colData@rownames)
+    sampleCell_embed <- sampleCell_list[[i]]
+    
+    capture_output[[i]] <- cell_capture(cell_embed, sampleCell_embed)
+    
+  }
+  
+  matches <- matches[which(matches$Status == "match"),]
+  
+  #return(capture_output)
+  
+  #get window size 
+  
+  match_counter <- 0
+  
+  multi_match <- c( names( table(matches[,1]) )[ table(matches[,1])>1 ], names( table(matches[,2]) )[ table(matches[,2])>1 ] )
+  
+  comparisons <- list()
+  
+  #FInd groups for comparisons
+  i <- 1
+  while ( i < (length(matches[,1]) +1) ){
+    
+    current <- c(matches[i,1], matches[i,2])
+    
+    if(current[1] %in% multi_match | current[2] %in% multi_match){
+      multi_index <- which(current %in% multi_match)
+      
+      match_counter <- match_counter + 1
+      
+      #Depending on which condition has the multi match we assign to the comparisons variable
+      
+      if (multi_index == 1){
+        comparisons <- append(comparisons, list( list(current[multi_index] , matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])))
+        
+      }
+      
+      else{
+        comparisons <- append(comparisons, list( list( matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index] , current[multi_index] )))
+        
+        
+      }
+      
+      i <- i + length(matches[ which(matches[,multi_index] == current[multi_index]) , 3-multi_index])
+      
+      
+    }
+    
+    else{
+      
+      comparisons <- append(comparisons, list( list(matches[i,1], matches[i,2])))
+      
+      match_counter <- match_counter + 1
+      i <- i + 1
+    }
+    
+  }
+  
+  #overlap + n_windows <= matches
+  matches <- length(comparisons)
+  
+  total_matches <- ( matches + (overlap * n_windows)  ) - overlap
+  
+  #number_matches_per_window <- (length(comparisons) * 2) / number_windows
+  
+  final_comparisons <- c()
+  
+  n_windows_cp <- n_windows
+  
+  for (i in 1:n_windows){
+    length_window <- round(total_matches/n_windows_cp)
+    
+    n_windows_cp <- n_windows_cp - 1
+    total_matches <- total_matches - length_window
+    
+    final_comparisons <- append(final_comparisons, length_window)
+    
+  }
+  
+  
+  exp_mtx_list <- list()
+  
+  match_counter <- 1
+  
+  comparisons_cp <- comparisons
+  
+  for (i in 1:length(final_comparisons)){
+    # print("")
+    # print(i)
+    move <- final_comparisons[i] - overlap
+    
+    cells_1 <- c()
+    cells_2 <- c()
+    
+    for (j in 1:final_comparisons[i]){
+      # print(paste0("j = ", j))
+      # print(comparisons[[j]][[1]])
+      cells_1 <- append(cells_1, unlist( capture_output[[1]][ comparisons[[j]][[1]] ] ) )  
+      cells_2 <- append(cells_2, unlist( capture_output[[2]][ comparisons[[j]][[2]] ] ) )
+      
+    }
+    
+    expr_mtx_1 <- cell_list[[1]]@assays@data$logcounts[ , cells_1 ]
+    expr_mtx_2 <- cell_list[[2]]@assays@data$logcounts[ , cells_2 ]
+    
+    exp_mtx_list[[i]] <- list(expr_mtx_1, expr_mtx_2)
+    
+    output <- de_metrics_return(expr_mtx_1, expr_mtx_2, logfc, p_val, min.pct, all.genes, test_function, own.genes, correct)
+    
+    #return(output)
+    
+    de_genes_output <- append(de_genes_output, list(output))
+    
+    match_counter <- match_counter + move
+    
+    comparisons <- comparisons[-(1:move)]
+    
+  }
+  
+  #return(exp_mtx_list)
+  
+  print(final_comparisons)
+  return(list(de_genes_output, exp_mtx_list, capture_output, comparisons_cp))
+}
+
+de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min.pct, all.genes, test_function, own.genes = "no", correct = T){
+  
+  gene_list_og <- intersect(row.names(expr1), row.names(expr2))
+  
+  gene_list <- intersect(row.names(expr1), row.names(expr2))
+  gene_all <- gene_list
+  
+  print(length(gene_list))
+  
+  expr1 <- expr1[gene_list,]
+  expr2 <- expr2[gene_list,]
+  
+  temp <- cbind(expr1, expr2)
+  
+  temp <- rowSums(temp)
+  
+  if(all.genes == F & own.genes == "no"){
+    gene_list <- names(temp)[which(temp > 0)]
+    expr1 <- expr1[gene_list,]
+    expr2 <- expr2[gene_list,]
+  }
+  
+  
+  pct_output <- pct_calculator(expr1, expr2, min.pct = min.pct, all.genes, own.genes )
+  
+  gene_list <-names(pct_output[[1]])
+  
+  expr1 <- expr1[gene_list,]
+  expr2 <- expr2[gene_list,]
+  
+  gene_df <- data.frame("gene", 0, 0, 0, 0)
+  colnames(gene_df) <- c("gene_name", "p_val", "logfc.change", "min.pct1", "min.pct2")
+  
+  condition_1 <- mean.fxn(expr1)
+  condition_2 <- mean.fxn(expr2)
+  
+  logfc_change <- condition_1 - condition_2
+  
+  test_result_vector <- c()
+  
+  # print(length(logfc_change))
+  # 
+  # print(length(which(logfc_change < logfc_threshold & logfc_change > (-1*logfc_threshold) )))
+  # 
+  if(all.genes == F & own.genes == "no" & logfc_threshold != 0){
+    gene_list <- gene_list[ -( which(logfc_change < logfc_threshold & logfc_change > (-1*logfc_threshold) ) ) ]
+    
+  }
+  
+  
+  logfc_change <- logfc_change[ gene_list ]
+  
+  pct_output[[1]] <- pct_output[[1]][gene_list]
+  pct_output[[2]] <- pct_output[[2]][gene_list]
+  
+  # print(length(gene_list))
+  # 
+  # print("")
+  
+  if(all.genes == T & own.genes == "no"){
+    print("help")
+    gene_list <- gene_all
+  }
+  
+  else if(all.genes == F & own.genes != "no"){
+    #print("somebody")
+    gene_list <- own.genes
+  }
+  
+  print(length(gene_list))
+  
+  for (gene in gene_list){
+    test_result <- test_function(expr1[gene,], expr2[gene,])
+    
+    test_result_vector <- append(test_result_vector, test_result$p.value)
+  }
+  
+  gene_df <- data.frame(gene_name = gene_list, logfc = logfc_change, p_val = test_result_vector ,adj_pval = test_result_vector, min.pct1 = pct_output[[1]], min.pct2 = pct_output[[2]])
+  
+  
+  library(stats)
+  print("corrected P-value")
+  print("length before")
+  print(length(gene_df[,1]))
+  print("")
+  print(length(gene_list_og))
+  gene_df[,4] <- p.adjust(gene_df[,4], method = "bonferroni", length(gene_list_og))
+  if (all.genes == F & own.genes == "no"){
+    #Remove genes with non-significant p-values and logfc not in the threshold
+    
+    if(correct){
+      gene_df <- gene_df[which(gene_df[,4] < pval_threshold),]
+    }
+    
+    else{
+      gene_df <- gene_df[which(gene_df[,3] < pval_threshold),]
+    }
+    
+    gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
+  }
+  print("Length after")
+  print(length(gene_df[,1]))
+  
+  
+  
+  
+  return(gene_df) 
+}
