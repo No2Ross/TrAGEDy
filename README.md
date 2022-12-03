@@ -121,11 +121,16 @@ The path of the data through the matrix
 PlotAlignment(path_cut, penalty_mtx)
 ```
 
+![](TrAGEDy_example/PlotAlignment.png)
+
 or with visualisation of the pseudotime of the interpolated points and their matches
 
 ```
 PlotOutput(WT_tree, KO_tree, path_cut)
 ```
+
+![](TrAGEDy_example/plotOutput_unaligned.png)
+
 
 ## Step 4 - Adjust pseudotime of interpolated points and cells
 Using the alignment path, we can then adjust the pseudotimes of the interpolated points, with matched interpolated points having a similar pseudotime value.
@@ -146,6 +151,9 @@ We can then visualise the changes in pseudotime based on the alignment path
 ```
 PlotOutput(WT_tree_new, KO_tree_new , path_cut)
 ```
+
+![](TrAGEDy_example/plotOutput_aligned.png)
+
 
 Finally we adjust the pseudotime of the individual cells based on the new pseudotimes of the interpolated points
 ```
