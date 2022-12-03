@@ -1,4 +1,5 @@
 # TrAGEDy
+![](TrAGEDy_example/logo.png)
 Trajectory Alignment of Gene Expression Dynamics
 
 # Introduction to TrAGEDy method
