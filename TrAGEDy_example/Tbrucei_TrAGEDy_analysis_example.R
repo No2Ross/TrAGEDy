@@ -31,7 +31,6 @@ KO_ID <- data.frame(KO_sce$cell_type, row.names =KO_sce@colData@rownames)
 WT_tree <- nodePseudotime(WT_cell_pseudotime,WT_ID, 50, "WT")
 KO_tree <- nodePseudotime(KO_cell_pseudotime,KO_ID, 50, "KO")
 
-#cellalign node exp mtx - not scaled with cellalign way
 KO_cell_pseudo <- data.frame("ID" = KO_sce@colData@rownames, "pseudo" = KO_sce$slingPseudotime_1)
 KO_node_pseudo <- data.frame("ID" = row.names(KO_tree$pseudotime), "pseudo" = KO_tree$pseudotime$pseudotime)
 
