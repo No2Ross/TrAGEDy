@@ -24,7 +24,7 @@ We supply the objects with pseudotime already included, as well as the feature s
 
 TrAGEDy uses cellAlign's method for creating interpolated points with some minor adjustments. First, the user decides how many interpolated points will be created across the trajectory and how big the window size should be. We chose 50 interpolated points for our analysis and we wanted the window size to mean adjacent interpolated points had mixes of cells being considered.
 
-'''
+```
 pseudo_end <- min(c(max(KO_sce$slingPseudotime_1, WT_sce$slingPseudotime_1)))
 window <- pseudo_end / 45
 
@@ -36,7 +36,7 @@ KO_ID <- data.frame(KO_sce$cell_type, row.names =KO_sce@colData@rownames)
 #Create Interpolated points across pseudotime 
 WT_tree <- nodePseudotime(WT_cell_pseudotime,WT_ID, 50, "WT")
 KO_tree <- nodePseudotime(KO_cell_pseudotime,KO_ID, 50, "KO")
-'''
+```
 
 ... A larger window size means interpolated point gene expression will be influenced by more cells further away from it and vice versa. 
 
