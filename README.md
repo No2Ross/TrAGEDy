@@ -1,5 +1,5 @@
 ![](TrAGEDy_example/logo.png)
-<p align="center"> #Trajectory Alignment of Gene Expression Dynamics </p>
+<p align="center"> **Trajectory Alignment of Gene Expression Dynamics** </p>
 
 # Introduction to TrAGEDy method
 While the study of an organism or biological process by itself is important, understanding the effect of the environment or conditions on an organism or biological process is also critical. Whether this be genetic, nutrient, environmental or disease conditions; understanding what genes define the differences across these conditions can help us better understand the underlying process/organism in general. 
