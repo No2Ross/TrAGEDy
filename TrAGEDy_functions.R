@@ -105,8 +105,6 @@ nodeExpressionEstimate <- function(cell_exp_mtx, node_pseudo, cell_pseudo, windo
     window_vector <- rep(window,length(node_pseudo[,1]))
   }
   
-  print(window_vector)
-  
   node_exp_mtx <- matrix(nrow = 50, ncol = length(node_pseudo[,1]))
   
   weight_vector <- c()
@@ -149,8 +147,6 @@ pct_calculator <- function(expr_mtx_1, expr_mtx_2, min.pct, all.genes, own.genes
   genes <- intersect(row.names(expr_mtx_1), row.names(expr_mtx_2))
   
   final_genes <- genes
-  
-  #print(final_genes)
   
   count_mtx_1 <- 1 - (rowCounts(expr_mtx_1, value = 0) /length(colnames(expr_mtx_1)))
   names(count_mtx_1) <- row.names(expr_mtx_1)
@@ -276,7 +272,6 @@ commonID <- function(captures, clusters){
     cluster_c <- clusters[captures[[i]],]
     
     occurence <- table(cluster_c)
-    # print(table(cluster_c))
     
     choice <- names(occurence)[which(occurence == max(occurence))]
     
@@ -291,31 +286,19 @@ commonID <- function(captures, clusters){
       choice <- "None"
     }
     
-    #print(choice)
     name_vector <- append(name_vector, choice)
-    # output[names(captures)[i],1] <- choice
     output[i,1] <- choice
-    
-    print(choice)
-    print("")
     
   }
   
-  # multi_which <- which(str_detect(names_vector, "/"))
   none_which <- which(name_vector == "None")
   
   for (i in none_which){
     name_vector[i] <- unique( c( name_vector[i-1], name_vector[i+1] ) )[1]
   }
   
-  # for (i in multi_which){
-  #   choice <- unique(c(names_vector[i-1]))[1]
-  #   
-  # }
   
   output[,1] <- name_vector
-  
-  print(occurence)
   
   return(output)
 }
@@ -339,7 +322,6 @@ dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method){
   dis_matrix <- as.matrix(dis_matrix)
   
   print( pheatmap::pheatmap(as.matrix(t(dis_matrix)), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA) )
-  
   
   return(dis_matrix)
 }
@@ -383,14 +365,7 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type, method){
     
     end <- loc
     
-    print("start")
-    print(start)
-    print("end")
-    print(end)
-    
     output <- find_start_end(penalty_mtx, start, end, method)
-    
-    print(output)
     
     penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
     
@@ -477,11 +452,6 @@ ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
     
     end <- loc
     
-    print("start")
-    print(start)
-    print("end")
-    print(end)
-    
     output <- find_start_end(penalty_mtx, start, end)
     
     penalty_mtx <- penalty_mtx[ output[[1]][1]:output[[2]][1] , output[[1]][2]:output[[2]][2] ]
@@ -536,9 +506,6 @@ ROC_fill_mtx_reverse <- function(penalty_mtx, cut_type){
 #Find optimal starting point, taking into consideration the correlation landscape of the error surface
 find_start_end <- function(penalty_mtx, start, end, method){
   
-  print(start)
-  print(end)
-  
   if(method == "mean"){
     cutoff_metric <- function(x){return(mean(x))}
     
@@ -554,17 +521,8 @@ find_start_end <- function(penalty_mtx, start, end, method){
   if(start[1] != 1 | start[2] != 1 ){
     #Need to find where to take the slice
     #determined by finding the maximum index based off the context of the number of metaCells in each condition
-    # index_1 <- which(start == max(start))
-    # index_1 <- which( c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,])) == max(  c(start[1]/length(penalty_mtx[,1]), start[2]/length(penalty_mtx[1,]))  )     )[1]
-    # 
-    index_1 <- which(start != 1)
-    print("")
-    print(start)
-    print(index_1)
     
-    # print("section")
-    # print(start)
-    # print(paste0("index:",index_1))
+    index_1 <- which(start != 1)
     
     #get rate of change for the start
     if(index_1 == 1){
@@ -576,8 +534,7 @@ find_start_end <- function(penalty_mtx, start, end, method){
       slice_1 <- penalty_mtx[1,]
     }
     
-    #print(slice_1)
-    
+
     distances_1 <- c()
     
     for (i in 1:length(slice_1)){
@@ -591,43 +548,13 @@ find_start_end <- function(penalty_mtx, start, end, method){
       
     }
     
-    #print(distances_1)
-    # print("distances")
-    # print(distances_1)
-    # print("change")
-    # print(change_v1)
-    # 
-    # print("dist function")
-    # print(dist(slice_1))
-    # print("median dist")
-    # print(median(dist(slice_1)))
-    # 
-    # print("median cutoff")
-    # print(median(change_v1))
-    # 
-    # print("mean cutoff")
-    # print(mean(change_v1))
-    
     #get histogram of distances from the current start point
     hist_distance <- hist(distances_1)
     
     choices_1 <- which(distances_1 < hist_distance$breaks[2])
     
-    #cutoff_1 <- median(change_v1)
     cutoff_1 <- cutoff_metric(change_v1)
-    #cutoff_1 <- cutoff_metric(dist(slice_1))
-    
-    print(paste0("Cut off 1: ", cutoff_1))
-    print(paste0("Cut off 1 distance: ", cutoff_metric(distances_1)))
-    
-    
-    #cutoff_1 <- mean(c(cutoff_metric(change_v1), cutoff_metric(dist(slice_1))))
-    
     selection_1 <- slice_1[1:start[index_1]]
-    
-    #print(which(slice_1 < cutoff_1))
-    
-    #print(cutoff_1)
     
     start[index_1] <- min(which(distances_1 < cutoff_1))
     start[index_1] <- min(choices_1)
@@ -662,22 +589,12 @@ find_start_end <- function(penalty_mtx, start, end, method){
       
     }
     
-    #cutoff_2 <- median(change_v2)
     cutoff_2 <- cutoff_metric(change_v2)
-    #cutoff_2 <- cutoff_metric(dist(slice_2))
-    #cutoff_2 <- mean(c(cutoff_metric(change_v2), cutoff_metric(dist(slice_2))))
-    
-    print(paste0("Cut off 2: ", cutoff_2))
-    print(paste0("Cut off 2 distance: ", cutoff_metric(distances_2)))
-    
+
     hist_distance <- hist(distances_2)
     
     choices_2 <- which(distances_2 < hist_distance$breaks[2])
-    print("hmm")
-    print(hist_distance$breaks[1])
-    print(choices_2)
-    print(distances_2)
-    
+
     end[index_2] <- max(which(distances_2 < cutoff_2))
     end[index_2] <- max(choices_2)
   }
@@ -701,159 +618,6 @@ own_fib_ROC <- function(number_vector){
   return(output)
 }
 
-traceforward_pathfind <- function(penalty_mtx, cut_type, method){
-  penalty_mtx_cp <- penalty_mtx
-  error_surface <- ROC_fill_mtx(penalty_mtx, cut_type, method)
-  
-  penalty_mtx_cut <- penalty_mtx[row.names(error_surface), colnames(error_surface)]
-  
-  #add high score ends to error_surface
-  error_surface <- rbind(error_surface, rep(1000,length(colnames(error_surface))))
-  error_surface <- cbind(error_surface, rep(1000,length(row.names(error_surface))))
-  
-  #Find minimum at end to start from
-  choice <- c( min( error_surface[ 1 , ] ), min( error_surface[ , 1 ] ) )
-  #print(choice)
-  
-  index_choice <- which(choice == min(choice))
-  
-  if (index_choice == 1){
-    loc <- c( 1 , which( error_surface[ 1 , ] == choice[index_choice] ) )
-  }
-  
-  else{
-    loc <- c( which( error_surface[ , 1 ] == choice[index_choice] ), 1 )
-  }
-  
-  loc <- c(1,1)
-  
-  #diag, vertical, horizontal
-  movement_frame <- data.frame(cond_1 = c(1, 1, 0), cond_2 = c(1, 0, 1))
-  
-  match_frame <- data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])
-  
-  score_vector <- c(error_surface[loc[1], loc[2]])
-  score_vector <- c(penalty_mtx_cut[loc[1], loc[2]])
-  
-  
-  previous_choice <- 1
-  
-  x <- T
-  
-  while (x == T){
-    choice_vector <- c(error_surface[loc[1]+1, loc[2]+1], error_surface[loc[1]+1 , loc[2]], error_surface[loc[1], loc[2]+1]  )
-    
-    choice <- which(choice_vector == min(choice_vector))
-    # print(loc)
-    #print(paste0("Choice: ", choice))
-    # print(paste0("Previous choice: ", previous_choice))
-    #print(paste0("Matrix location: ",loc))
-    #print(error_surface[loc[1], loc[2]])
-    #print("")
-    if (choice %in% c(2,3)){
-      temp_loc <- loc + as.numeric(movement_frame[choice,])
-      
-      temp_choice_vector <- c(error_surface[temp_loc[1]+1, temp_loc[2]+1], error_surface[temp_loc[1]+1 , temp_loc[2]], error_surface[temp_loc[1], temp_loc[2]+1]  )
-      
-      temp_choice <- which(temp_choice_vector == min(temp_choice_vector))
-      #print(paste0("temp_choice: ", temp_choice))
-      if ( !(temp_choice %in% c(choice,1)) ){
-        #print("in")
-        loc <- loc + c(1,1)
-        
-        choice <- 1
-        
-        match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
-        
-        score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
-        
-      }
-      
-      else{
-        loc <- loc + as.numeric(movement_frame[choice,])
-        
-        match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
-        
-        score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
-        
-      }
-      
-    }
-    
-    else{
-      loc <- loc + as.numeric(movement_frame[choice,])
-      
-      match_frame <- rbind(match_frame,data.frame(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
-      
-      score_vector <- append(score_vector , c(penalty_mtx_cut[loc[1], loc[2]]) )
-      
-      
-    }
-    
-    #Exit when we reach the end of one of the processes
-    if (loc[1] == (length(error_surface[,1])-1) | loc[2] == (length(error_surface[1,])-1) ){
-      x <- F
-    }
-    
-    #print(loc[2] == length(error_surface[1,]))
-    
-    previous_choice <- choice
-    #print("")
-  }
-  
-  print(loc)
-  
-  
-  
-  #add the steps that take us to the final matrix position if we're not already there
-  
-  
-  
-  
-  if(loc[1] != (length(row.names(error_surface))-1 ) | loc[2] != (length(colnames(error_surface))-1 ) ){
-    finish_choice <- c( abs(loc[1] - length(row.names(error_surface))  )-1  , abs(loc[2] - length(colnames(error_surface)) )  -1 ) 
-    print(finish_choice)
-    finish_index <- which(finish_choice == max(finish_choice))
-    
-    loc[finish_index] <- loc[finish_index] + 1
-    
-    finish_choice[finish_index] <- finish_choice[finish_index] - 1
-    
-    last_index_1 <- seq(loc[1], loc[1] + finish_choice[1])
-    last_index_2 <- seq(loc[2], loc[2] + finish_choice[2])
-    
-    print(last_index_1)
-    print(last_index_2)
-    
-    #print(finish_choice)
-    
-    finish_choice <- finish_choice + 1
-    
-    #print(finish_choice)
-    
-    final_addition <- data.frame(rep(row.names(error_surface)[last_index_1], finish_choice[2]), rep(colnames(error_surface)[last_index_2], finish_choice[1]) )
-    colnames(final_addition) <- colnames(match_frame)
-    #print(final_addition)
-    
-    #print(colnames(match_frame))
-    
-    match_frame <- rbind(match_frame,final_addition)
-    
-    #print(penalty_mtx_cut[last_index_1, last_index_2])
-    
-    score_vector <- append(score_vector , c(penalty_mtx_cut[last_index_1, last_index_2]) )
-    
-    
-  }
-  
-  
-  
-  output <- data.frame('X' = match_frame[,2],"Y" = match_frame[,1] , score_vector)
-  return(output)
-  
-  
-}
-
 
 #Traceback from the lowest point on the last row or column
 #If you do that it follows the path of just moving through the minimum like in my first way of finding the path
@@ -872,7 +636,6 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
   
   #Find minimum at end to start from
   choice <- c( min( error_surface[ last_row , ] ), min( error_surface[ , last_column ] ) )
-  print(choice)
   
   index_choice <- which(choice == min(choice))
   
@@ -898,34 +661,28 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
   
   move_choice <- which( options == min(options) )
   
-  #print(move_choice)
-  
+
   previous_choice = move_choice
   
   if (1 == move_choice){
     loc <- loc + factor
-    #print("diag")
   }
   
   else if (2 == move_choice){
     loc[1] <- loc[1] + factor
-    #print("vertical")
   }
   
   else{
     loc[2] <- loc[2] + factor
-    #print("horizontal")
   }
   
-  #print(paste("match: ", c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])))
-  
+
   match_frame <- rbind(match_frame, c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
   score_vector <- append(score_vector,penalty_mtx_cut[loc[1], loc[2]])
   
   x <- T
   counter <- 1
   while (x == T){
-    #print(loc)
     #Three movement options
     #1. Diagonally - a 1 to 1 match
     #2 vertically - a many to 1 match 
@@ -937,15 +694,7 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
     
     options <- c(diag, vertical, horizontal)
     
-    #print(paste("diag: ", diag))
-    #print(paste("horizontal: ", horizontal))
-    #print(paste("vertical: ", vertical))
-    #print(options)
-    
     move_choice <- which( options == min(options, na.rm=T) )
-    
-    #print(paste("move_choice:" , c("diag", "vertical", "horizontal")[move_choice]))
-    #print("")
     
     #Stops us from creating a massive chain of aligned cells between the two processes
     if ((move_choice + previous_choice) == 5 ){
@@ -968,31 +717,23 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
     
     if (1 == move_choice){
       loc <- loc + factor
-      #print("diag")
     }
     
     else if (2 == move_choice){
       loc[1] <- loc[1] + factor
-      #print("vertical")
     }
     
     else{
       loc[2] <- loc[2] + factor
-      #print("horizontal")
     }
-    
-    #print(paste("match: ", c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]])))
     
     match_frame <- rbind(match_frame, c(row.names(error_surface)[loc[1]], colnames(error_surface)[loc[2]]))
     score_vector <- append(score_vector,penalty_mtx_cut[loc[1], loc[2]])
     
     previous_choice <- move_choice
     
-    #print("")
-    
     if (loc[1] == 2 | loc[2] == 2){
-      #print(paste("final: ", c(loc[1], loc[2])))
-      
+
       #If we've reached the end of the alignment already then we don't want to add it again
       if(sum(loc) != 2){
         
@@ -1002,8 +743,6 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
         final_addition <- cbind(rep(row.names(error_surface)[loc[1]:1], loc[2]) , rep(colnames(error_surface)[loc[2]:1], loc[1]))
         score_vector <- append(score_vector,penalty_mtx_cut[loc[1]:1, loc[2]:1])
         
-        #print(final_addition)
-        
         colnames(final_addition) <- colnames(match_frame)
         
         match_frame <- rbind(match_frame, final_addition)
@@ -1012,7 +751,6 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
       
       x <- F
     }
-    #print(options)
     counter <- counter + 1
     
   }
@@ -1020,29 +758,20 @@ traceback_pathfind <- function(penalty_mtx, cut_type, method){
   output <- data.frame(rev(match_frame[,2]), rev(match_frame[,1]), rev(score_vector))
   colnames(output) <- c("X", "Y")
   
-  
   return(output)
   
 }
 
 
 pathfind <- function(penalty_mtx, cut_type, method){
-  choice_list <- list(traceforward_pathfind(penalty_mtx, cut_type, method), traceback_pathfind(penalty_mtx, cut_type, method) )
+
+  output <- traceback_pathfind(penalty_mtx, cut_type, method)
   
-  print(sum(choice_list[[1]][,3]))
-  print(sum(choice_list[[2]][,3]))
-  
-  scores <- c(( sum(choice_list[[1]][,3])/length(choice_list[[1]][,3]) ),( sum(choice_list[[2]][,3])/length(choice_list[[2]][,3]) )  )
-  
-  #return whichever path has the lowest overall score, or if they are equal, a random one
-  if(scores[1] != scores[2]){
-    output <- choice_list[[which(scores == min(scores))]]
+  if( mean(output[,3]) > 0.5 ){
+    
+    print(paste0("The mean score of your optimal path is ", mean(output[,3]), ". You should consider whether or not these two processes share a common process" ))
+    
   }
-  
-  else{
-    output <- choice_list[[1]]
-  }
-  
   
   return(output)
 }
@@ -1284,8 +1013,6 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           #get index of the common node for the multi-matching
           common_index <- which(!(c(tree_chunk[item,1], tree_chunk[item,2]) %in% unique_nodes))
           
-          #print(tree_chunk[item,common_index])
-          
           lower_squish <- pseudo_list[[common_index]][tree_chunk[item,common_index],1]
           
           #Find the upper squish value
@@ -1295,15 +1022,13 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           
           #upper_squish <- min( c( pseudo_list[[1]][ tree_chunk_nodes[[1]] , 1 ], pseudo_list[[2]][ tree_chunk_nodes[[2]] , 1 ] ) )
           squish_nodes <- tree_chunk[ which(tree_chunk[,common_index]==tree_chunk[item,common_index]) ,(3-common_index)]
-          print(paste0("squish: ", squish_nodes))
-          
+
           #Finds the nodes that occur after the final matching in this particular multimatch
           after_nodes <-c( row.names(pseudo_list[[3-common_index]])[ ( which( row.names(pseudo_list[[3-common_index]]) == squish_nodes[length(squish_nodes)] ) +1 ) ],
                            row.names(pseudo_list[[common_index]])[pseudo_position+1])
           
           #If we're doing a multi-align at the end of the process, there will be no nodes that occur after it to squish between
           if (is.na(after_nodes) == T){
-            #print("argh")
             upper_squish <- lower_squish + mean( abs( pseudo_list[[common_index]][,1] - mean(pseudo_list[[common_index]][,1]) ) )
             
           }
@@ -1315,12 +1040,9 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           
           upper_squish <- upper_squish - ((upper_squish-lower_squish)/ length(squish_nodes))
           
-          #print(paste0("upper squish", upper_squish))
-          #print(paste0("lower squish", lower_squish))
-          
           output <- squish_function(values = pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
           output <- scale_function(pseudo_list[[3-common_index]][squish_nodes,1], upper_squish, lower_squish)
-          #print(paste0("output: ", output))
+
           diff <- abs(pseudo_list[[3-common_index]][ squish_nodes[length(squish_nodes)] , 1 ] - output[length(output)])
           
           pseudo_list[[3-common_index]][squish_nodes,1] <- output
@@ -1486,7 +1208,8 @@ PlotOutput<- function(tree_1, tree_2, alignment){
   
   #print(max(plot_df$pseudotime))
   
-  print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=2) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
+  print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=2) + geom_line(aes(group = group)) + theme_classic() ) +
+    scale_y_discrete(expand = c(0,0.1))
   
 }
 
