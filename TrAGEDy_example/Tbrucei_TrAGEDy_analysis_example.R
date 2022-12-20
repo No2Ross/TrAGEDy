@@ -111,7 +111,7 @@ all_genes <- unique(all_genes)
 
 #First, we need to get statistics for all the genes we want to plot by supplying them in the 'own.genes' parameter
 
-output_all <- TrajDE(list(WT_sce, KO_sce), list(WT_node_pseudo, KO_node_pseudo), path_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T, own.genes = all_genes)
+ooutput_all <- TrajDE(list(WT_sce, KO_sce), list(WT_node_pseudo, KO_node_pseudo), path_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T, own.genes = all_genes)
 
 gene_output_all <- output_all[[1]]
 
