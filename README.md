@@ -28,10 +28,6 @@ library(slingshot)
 library(RColorBrewer)
 library(Seurat)
 library(SingleCellExperiment)
-library(phateR)
-library(reticulate)
-use_python("/usr/local/bin/python3.8")
-reticulate::import("phate")
 library(ggplot2)
 library(dplyr)
 library(stats)
@@ -43,7 +39,7 @@ library(rgl)
 
 TrAGEDy makes no assumptions about what Trajectory Inference package is used, it only requires that the trajectories be linear in nature. For this analysis we used Slingshot from Street et al, 2018 to construct a trajectory based off of reduced dimension embeddings from PHATE (Moon et al, ). Before a trajectory is made, the user first needs to supply a vector of genes which will be used to build the trajectory and calculate gene expression dissimilarity scores between the conditions.
 
-We supply the objects with pseudotime already included, as well as the feature space gene list.
+We supply the objects with pseudotime already included, as well as the feature space gene list. While we are setting up our Zenodo, please contact us for the WT and KO files.
 
 ```
 WT_sce <- readRDS("path/to/WT_sce_merged.rds")
