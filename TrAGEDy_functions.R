@@ -1028,7 +1028,9 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
                            row.names(pseudo_list[[common_index]])[pseudo_position+1])
           
           #If we're doing a multi-align at the end of the process, there will be no nodes that occur after it to squish between
-          if (is.na(after_nodes) == T){
+          #If one of the values is NA, the sum of after nodes will be more than 0, thus we enter this if statement
+
+          if (sum(is.na(after_nodes)) > 0){
             upper_squish <- lower_squish + mean( abs( pseudo_list[[common_index]][,1] - mean(pseudo_list[[common_index]][,1]) ) )
             
           }
