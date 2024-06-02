@@ -1,5 +1,5 @@
 library(reticulate)
-use_python("/usr/local/bin/python3.8")
+use_python("/Users/rosslaidlaw/mambaforge/bin/python")
 reticulate::import("phate")
 library(gridExtra)
 library(grid)
@@ -19,8 +19,8 @@ library(clustree)
 library(RColorBrewer)
 library(SingleCellExperiment)
 library(clustree)
-library(STACAS)
-library(monocle)
+# library(STACAS)
+# library(monocle)
 library(slingshot)
 library(stats)
 library(stringi)
@@ -31,9 +31,10 @@ library(coin)
 library(biomaRt)
 library(metap)
 
-int_obj <- readRDS("path/to/Tcell/dataset/WZ_Bcl11bKO_tworuns_integrated.rds")
+genesV2 <- read.csv("/Users/rosslaidlaw/R/TrAGEDy_V2/general/human_to_mouse_seurat_cellcycle.csv")
+cell_cycle <- readxl::read_xlsx("/Users/rosslaidlaw/R/TrAGEDy_V2/general/mgi_cellCycle_GO.xlsx")
 
-genesV2 <- read.csv("path/to/seurat/cellcycle/genes/human_to_mouse_seurat_cellcycle.csv")
+int_obj <- readRDS("/Users/rosslaidlaw/R/TrAGEDy_V2/Tcell_Bcl11b_KO/objects/WZ_Bcl11bKO_tworuns_integrated.Rds")
 
 DefaultAssay(int_obj) <- "RNA"
 
@@ -54,173 +55,104 @@ DefaultAssay(int_obj) <- "RNA"
 #remove no cre control
 int_obj <- subset(int_obj, sample_id != "D10_FF_NoCre_rep1")
 
+DimPlot(int_obj, group.by = "seurat_clusters")
+
 FeaturePlot(int_obj, reduction = "umap", features = c("Ptcra", "Rag1"), split.by = "condition")
 FeaturePlot(int_obj, reduction = "umap", features = "Trac", split.by = "condition")
-FeaturePlot(int_obj, reduction = "umap", features = "Rora", split.by = "condition")
+FeaturePlot(int_obj, reduction = "umap", features = "Zap70", split.by = "condition")
+FeaturePlot(int_obj, reduction = "umap", features = c("Cd8a", "Zap70"), split.by = "condition")
 
 VlnPlot(int_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
 
-#int_obj <- subset(int_obj, nCount_RNA < 20000)
 
-WT_obj <- subset(int_obj, condition == "WT")
-KO_obj <- subset(int_obj, condition == "Bcl11b_KO")
+int_obj[["RNA"]] <- split(int_obj[["RNA"]], f = int_obj$orig.ident)
 
-FeaturePlot(WT_obj, feature = "Zap70", split.by = "day")
+int_obj <- NormalizeData(int_obj)
+int_obj <- FindVariableFeatures(int_obj)
+int_obj <- ScaleData(int_obj, vars.to.regress = c("nCount_RNA", genesV2$MGI.symbol))
+int_obj <- RunPCA(int_obj)
 
-WT.list <- SplitObject(WT_obj, "orig.ident")
+int_obj <- IntegrateLayers(object = int_obj, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
+                        verbose = FALSE)
 
-out.list <- list()
+DefaultAssay(int_obj) <- "integrated"
 
-for (i in 1:length(WT.list)){
-  current <- WT.list[[i]]
-  
-  s.genes <- c(str_to_title(tolower(cc.genes$s.genes)), "Cenpu")
-  g2m.genes <- c(str_to_title(tolower(cc.genes$g2m.genes)), "Pimreg", "Jpt1")
-  
-  DefaultAssay(current) <- "RNA"
-  
-  current <- CellCycleScoring(current, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
-  
-  
-  current.list <- SplitObject(current, "sample_id")
-  
-  current.list <- lapply(X = current.list, FUN = function(x) {
-    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
-    x <- NormalizeData(x)
-  })
-  
-  features <- SelectIntegrationFeatures(object.list = current.list, nfeatures = 3000)
-  
-  WT.anchors <- FindIntegrationAnchors(object.list = current.list, anchor.features = features)
-  
-  # this command creates an 'integrated' data assay
-  WT.combined <- IntegrateData(anchorset = WT.anchors)
-  
-  out.list[[i]] <- WT.combined
-  
-  
-}
+int_obj <- ScaleData(int_obj, vars.to.regress = c("nCount_RNA", genesV2$MGI.symbol))
 
-features <- SelectIntegrationFeatures(object.list = out.list, nfeatures = 3000)
+DefaultAssay(int_obj) <- "RNA"
+
+int_obj[["RNA"]] <- JoinLayers(int_obj[["RNA"]])
+ElbowPlot(int_obj, ndims = 50)
+
+int_obj <- FindNeighbors(int_obj, reduction = "integrated.cca", dims = 1:25)
+int_obj <- FindClusters(int_obj, resolution = 0.6)
+int_obj <- RunUMAP(int_obj, reduction = "integrated.cca",dims = 1:25)
 
 
-WT.anchors <- FindIntegrationAnchors(object.list = out.list, anchor.features = features)
-
-# this command creates an 'integrated' data assay
-WT.combined <- IntegrateData(anchorset = WT.anchors)
+DimPlot(int_obj, label = T)
+DimPlot(int_obj, reduction = "integrated.cca")
 
 
-DefaultAssay(WT.combined) <- "integrated"
+DefaultAssay(int_obj) <- "RNA"
 
-KO.list <- SplitObject(KO_obj, "orig.ident")
+combined_markers <- FindAllMarkers(int_obj, logfc.threshold = 0.5, only.pos = T)
+combined_markers <- subset(combined_markers, p_val_adj < 0.05)
 
-out.list <- list()
+FeaturePlot(int_obj, features = c("Cd34", "Zap70", "Cd3e", "Trac", "Ptcra", "Rora"))
+VlnPlot(int_obj, features = c("Cd34", "Rag1", "Cd3e", "Trac", "Ptcra", "Rora"))
 
-for (i in 1:length(KO.list)){
-  current <- KO.list[[i]]
-  
-  s.genes <- c(str_to_title(tolower(cc.genes$s.genes)), "Cenpu")
-  g2m.genes <- c(str_to_title(tolower(cc.genes$g2m.genes)), "Pimreg", "Jpt1")
-  
-  DefaultAssay(current) <- "RNA"
-  
-  current <- CellCycleScoring(current, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
-  
-  
-  current.list <- SplitObject(current, "sample_id")
-  
-  current.list <- lapply(X = current.list, FUN = function(x) {
-    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
-    x <- NormalizeData(x)
-  })
-  
-  features <- SelectIntegrationFeatures(object.list = current.list, nfeatures = 3000)
-  
-  
-  KO.anchors <- FindIntegrationAnchors(object.list = current.list, anchor.features = features)
-  
-  rm(current)
-  rm(current.list)
-  gc()
-  
-  # this command creates an 'integrated' data assay
-  KO.combined <- IntegrateData(anchorset = KO.anchors)
-  
-  out.list[[i]] <- KO.combined
-  
-  
-}
-
-features <- SelectIntegrationFeatures(object.list = out.list, nfeatures = 3000)
+VlnPlot(int_obj, features = c("Tcrg-C2", "Tcrg-C4", "Dntt"))
 
 
-KO.anchors <- FindIntegrationAnchors(object.list = out.list, anchor.features = features)
-
-KO.combined <- IntegrateData(anchorset = KO.anchors)
-
-DefaultAssay(KO.combined) <- "integrated"
-
-Tcell.list <- list(KO.combined, WT.combined)
-names(Tcell.list) <- c("Bcl11b_KO", "WT")
-
-features <- SelectIntegrationFeatures(object.list = Tcell.list, nfeatures = 3000)
-
-Tcell.anchors <- FindIntegrationAnchors(object.list = Tcell.list, anchor.features = features)
-
-Tcell.combined <- IntegrateData(anchorset = Tcell.anchors)
+VlnPlot(int_obj, features = c("mt-Nd1", "mt-Nd3"))
 
 
-DefaultAssay(Tcell.combined) <- "integrated"
+int_obj <- RenameIdents(int_obj, "0" = "Cd3_hi_T", "1" = "Cd3_int_T_1", "2" = "rearrange_TCR_T", "3" = "Cd34_lo_Cd3_lo_T", "4" = "Cd3_int_T_2",
+                               "5" = "Cd3_lo_T", "6" = "TCR_AB_T",  "7" = "Rora_T", "8" = "Cd34_TSP",
+                        "9" = "Interferon_response")
 
-Tcell.combined <- ScaleData(Tcell.combined, verbose = FALSE, vars.to.regress = c(genesV2$MGI.symbol))
-Tcell.combined <- RunPCA(Tcell.combined, npcs = 50, verbose = FALSE)
-ElbowPlot(Tcell.combined, ndims = 50)
-Tcell.combined <- RunUMAP(Tcell.combined, reduction = "pca", dims = 1:25, n.components = 2)
-Tcell.combined <- FindNeighbors(Tcell.combined, dims = 1:25)
+int_obj$cell_type_seurat <- int_obj@active.ident
 
-res_options <- c(0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0)
+DimPlot(int_obj, label = T)
 
-for (i in res_options){
-  Tcell.combined <- FindClusters(Tcell.combined, res = i)
-}
-
-clustree(Tcell.combined, prefix = "integrated_snn_res.", node_size = 10,
-         node_alpha = 0.8)
-
-Tcell.combined <- FindClusters(Tcell.combined, res = 0.6)
-
-DefaultAssay(Tcell.combined) <- "RNA"
-
-Tcell.combined <- RenameIdents(Tcell.combined, "0" = "Cd3_T", "1" = "Cd3_lo_T", "2" = "early_T", "3" = "rearrange_TCR_KO", "4" = "rearrange_TCR_WT", "5" = "early_Rora_T","6" = "Cd34_TSP", "7" = "signalling_T",
-                               "8" = "Rora_T", "9" = "Outlier", "10" = "Interferon_response")
-
-Tcell.combined <- AddMetaData(Tcell.combined, Tcell.combined@active.ident, "cell_type_seurat")
-
-DimPlot(Tcell.combined, reduction = "umap", label = T, split.by = "condition", group.by = "cell_type_seurat")
-
-Tcell.combined <- subset(Tcell.combined, cell_type_seurat != "Interferon_response" & cell_type_seurat != "Rora_T" &
-                           cell_type_seurat != "early_Rora_T" & cell_type_seurat != "Outlier" & cell_type_seurat != "signalling_T")
-
-
-DefaultAssay(Tcell.combined) <- "RNA"
-
+int_obj <- subset(int_obj, cell_type_seurat != "Interferon_response")
 
 #Get pseudotime information for TradeSeq analysis
-phate_output <- as.matrix(phate(t(Tcell.combined@assays$integrated@scale.data), ndim=10, seed=1))
+phate_output <- as.matrix(phate(t(int_obj@assays$integrated@scale.data), ndim=15, seed=1))
 phate.reduction <- CreateDimReducObject(embeddings = phate_output,
                                         key="PHATE_",
                                         assay="RNA")
 
-Tcell.combined@reductions$phate <- phate.reduction
+int_obj@reductions$phate <- phate.reduction
 
-DimPlot(Tcell.combined, reduction = "phate", label = T, split.by = "condition", group.by = "cell_type_seurat")
+DimPlot(int_obj, reduction = "phate", label = T, split.by = "condition", group.by = "cell_type_seurat")
+FeaturePlot(int_obj, reduction="phate", feature = "Mki67") + xlim(-0.04, 0.04) + ylim(-0.03, 0.04)
 
-combined_sce <- as.SingleCellExperiment(Tcell.combined, assay = "RNA")
+
+combined_sce <- as.SingleCellExperiment(int_obj, assay = "RNA")
 combined_sce <- slingshot(combined_sce, reducedDim = 'PHATE', clusterLabels = combined_sce@colData@listData[["cell_type_seurat"]], start.clus = "Cd34_TSP")
 combined_sling <- SlingshotDataSet(combined_sce)
 
 combined_sce$pseudotime <- combined_sce$slingPseudotime_1
+int_obj$pseudotime <- combined_sce$pseudotime 
 
-combined_sce <- subset(combined_sce, , is.na(slingPseudotime_1) == F)
+combined_sce <- subset(combined_sce, ,is.na(slingPseudotime_1) == F)
+combined_sce <- subset(combined_sce, ,cell_type_seurat != "Cd3_lo_T" & cell_type_seurat != "Cd3_int_T_2")
+
+kept_cells <- colnames(combined_sce)
+
+keep_cells <- data.frame("keep_cells" = rep("no", dim(int_obj)[2]),
+                         row.names = colnames(int_obj))
+keep_cells[kept_cells,] <- "yes"
+
+int_obj$keep_cells <- keep_cells$keep_cells
+
+int_obj <- subset(int_obj, keep_cells == "yes")
+
+saveRDS(combined_sce, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tcell_Bcl11b_KO/objects/phate_cell_cycle_UMI_regress_sce_integrated.rds")
+saveRDS(int_obj, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tcell_Bcl11b_KO/objects/phate_cell_cycle_UMI_regress_seurat_integrated.rds")
+
+
+
 
 
