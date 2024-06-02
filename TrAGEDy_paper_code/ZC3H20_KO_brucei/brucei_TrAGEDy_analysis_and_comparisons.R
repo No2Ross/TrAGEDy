@@ -1,6 +1,6 @@
 #Trade seq and STACAS do not get along 
 library(reticulate)
-use_python("/usr/local/bin/python3.8")
+use_python("/Users/rosslaidlaw/mambaforge/bin/python")
 reticulate::import("phate")
 library(gridExtra)
 library(grid)
@@ -19,8 +19,8 @@ library(scran)
 library(clustree)
 library(RColorBrewer)
 library(SingleCellExperiment)
-library(STACAS)
-library(monocle)
+# library(STACAS)
+# library(monocle)
 library(slingshot)
 library(stats)
 library(stringi)
@@ -33,13 +33,16 @@ source("Scripts/methods/own_method_functions.R")
 
 emma_tradeseq_de <- read.delim("Emma_data_DE/emma_tradeseq_de.csv", sep = ",")
 
-WT_01_obj <- readRDS("emma_KO_WT_brucei_data/Emma Annotation/WT_01_aligned.rds")
-WT_02_obj <- readRDS("emma_KO_WT_brucei_data/Emma Annotation/WT_02_aligned.rds")
-KO_obj <- readRDS("emma_KO_WT_brucei_data/Emma annotation/ZC3H20_KO.rds")
+WT_01_obj <- readRDS("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/objects/WT_1_align.rds")
+WT_02_obj <- readRDS("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/objects/WT_2_align.rds")
+KO_obj <- readRDS("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/objects/KO_raw_brucei.rds")
+
+DimPlot(WT_01_obj, group.by = "seurat_clusters")
 
 WT_obj <- merge(WT_01_obj, WT_02_obj)
 
-features <- read.delim("/Users/rosslaidlaw/R/TrAGEDy_results/TrAGEDy_example/WT_ZC3H20_KO_feature_space.csv", sep = ",")[,2]
+features <- read.table("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/WT_ZC3H20_KO_feature_space.csv", sep = ",", col.names = 1)
+features <- features$X1
 
 KO_obj <- subset(KO_obj, cell_type %in% c("LS A", "LS B"))
 Idents(KO_obj) <- "cell_type"
@@ -68,94 +71,89 @@ WT_sce$newPseudotime <- NULL
 pseudo_end <- min(c(max(KO_sce$slingPseudotime_1, WT_sce$slingPseudotime_1)))
 window <- pseudo_end / 45
 
-#3: create metacells across pseudotime 
-WT_cell_pseudotime <- matrix(WT_sce$slingPseudotime_1, dimnames =list(WT_sce@colData@rownames))
-KO_cell_pseudotime <- matrix(KO_sce$slingPseudotime_1, dimnames =list(KO_sce@colData@rownames))
-WT_ID <- data.frame(WT_sce$cell_type, row.names =WT_sce@colData@rownames)
-KO_ID <- data.frame(KO_sce$cell_type, row.names =KO_sce@colData@rownames)
+#The node name cannot have underscores in it
+WT_tree <- nodePseudotime(WT_sce,"slingPseudotime_1","cell_type", 50, "WT")
+KO_tree <- nodePseudotime(KO_sce,"slingPseudotime_1","cell_type", 50, "KO")
 
-source("Scripts/methods/own_method_functions.R")
-WT_tree <- nodePseudotime(WT_cell_pseudotime,WT_ID, 50, "WT")
-KO_tree <- nodePseudotime(KO_cell_pseudotime,KO_ID, 50, "KO")
+WT_node_exp_mtx <- nodeExpressionEstimate(WT_sce@assays@data@listData$logcounts, WT_tree, window, adjust.window = T)
+KO_node_exp_mtx <- nodeExpressionEstimate(KO_sce@assays@data@listData$logcounts, KO_tree, window, adjust.window = T)
 
-#cellalign node exp mtx - not scaled with cellalign way
-KO_cell_pseudo <- data.frame("ID" = KO_sce@colData@rownames, "pseudo" = KO_sce$slingPseudotime_1)
-KO_node_pseudo <- data.frame("ID" = row.names(KO_tree$pseudotime), "pseudo" = KO_tree$pseudotime$pseudotime)
 
-WT_cell_pseudo <- data.frame("ID" = WT_sce@colData@rownames, "pseudo" = WT_sce$slingPseudotime_1)
-WT_node_pseudo <- data.frame("ID" = row.names(WT_tree$pseudotime), "pseudo" = WT_tree$pseudotime$pseudotime)
-
-KO_node_pseudotime <- matrix(KO_tree$pseudotime$pseudotime , dimnames = list(row.names(KO_tree$pseudotime)), )
-WT_node_pseudotime <- matrix(WT_tree$pseudotime$pseudotime , dimnames = list(row.names(WT_tree$pseudotime)), )
-
-source("Scripts/methods/own_method_functions.R")
-KO_node_exp_mtx <- nodeExpressionEstimate(KO_sce@assays@data@listData$logcounts, KO_node_pseudotime, KO_cell_pseudotime, window, adjust.window = T)
-
-WT_node_exp_mtx <- nodeExpressionEstimate(WT_sce@assays@data@listData$logcounts, WT_node_pseudotime, WT_cell_pseudotime, window, adjust.window = T)
-
-KO_node_exp_mtx  <- KO_node_exp_mtx[ features, ]
-WT_node_exp_mtx <- WT_node_exp_mtx[ features, ]
-
-#3.5: remove genes from our feature space which are not temporarily regulated in our process
-
-#4.1: Create correlation matrix based on the new feature space we used across the metacells
+WT_node_exp_mtx  <- WT_node_exp_mtx[ features, ]
+KO_node_exp_mtx <- KO_node_exp_mtx[ features, ]
 
 penalty_mtx_cut <- dis_mtx_calculator(as.matrix(WT_node_exp_mtx), as.matrix(KO_node_exp_mtx), "spearman")
 
-output_solution <- pathfind(penalty_mtx_cut, cut_type = "minimum", method = "mean")
-output_solution_cut <- cut_deviate(output_solution, penalty_mtx_cut, method = "mean")
+source("~/R/Scripts/Methods/own_method_functions.R")
+x <- bootstrap_pathfind(sequence_1 = as.matrix(WT_node_exp_mtx), sequence_2 = as.matrix(KO_node_exp_mtx)
+                        , similarity_method= "spearman", threshold_method = "mean")
 
-#output_solution_cut$Status <- rep("cut", length(output_solution_cut$Status))
-alignment_plot <- PlotAlignment(output_solution_cut, penalty_mtx_cut)
+output_solution_cut <- cut_deviate(x[[1]], penalty_mtx_cut, method = "mean")
 
+PlotAlignment(output_solution_cut, penalty_mtx_cut)
 
+pdf("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/TrAGEDy_heatmap_align.pdf", width = 7.75)
+PlotAlignment(output_solution_cut, penalty_mtx_cut)
+dev.off()
+
+pdf("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/TrAGEDy_dotplot_noalign.pdf")
 PlotOutput(WT_tree, KO_tree, output_solution_cut) + theme(legend.text=element_text(size=15), axis.text.y = element_text(size = 20), axis.text.x = element_text(size = 20), axis.title.y = element_text(size = 20),
-                                                          axis.title.x = element_text(size = 20)) 
+                                                          axis.title.x = element_text(size = 20))
+dev.off()
 
-
-test <- chunk_node(WT_tree$pseudotime, KO_tree$pseudotime, output_solution_cut)
-
-WT_tree_new <- WT_tree
-WT_tree_new$pseudotime <- data.frame(test$condition_1$pseudotime, row.names = row.names(WT_tree$pseudotime) )
-
-KO_tree_new <- KO_tree
-KO_tree_new$pseudotime <- data.frame(test$condition_2$pseudotime, row.names = row.names(KO_tree$pseudotime) )
-
-PlotOutput(WT_tree_new, KO_tree_new, output_solution_cut) + theme(legend.text=element_text(size=15), axis.text.y = element_text(size = 20), axis.text.x = element_text(size = 20), axis.title.y = element_text(size = 20),
-                                                                  axis.title.x = element_text(size = 20)) 
-
-#Will run into problem when both align from the beginning and we have to move cells backwards that are already at zero 
-KO_cell_pseudo <- data.frame(KO_sce$slingPseudotime_1, row.names = KO_sce@colData@rownames)
-KO_node_pseudo_new <- data.frame(row.names(test$condition_2),test$condition_2$pseudotime, test$condition_2$alignment, row.names =row.names(test$condition_2) )
-KO_node_pseudo <- data.frame( pseudotime = KO_tree$pseudotime, row.names = row.names(KO_tree$pseudotime))
-
-KO_cell_pseudo_new <- pseudo_cell_align(KO_cell_pseudo , KO_node_pseudo_new, KO_node_pseudo, window)
-KO_cell_pseudo_new <- KO_cell_pseudo_new[order(match(row.names(KO_cell_pseudo_new), row.names(KO_cell_pseudo))),]
-
-WT_cell_pseudo <- data.frame(WT_sce$slingPseudotime_1, row.names = WT_sce@colData@rownames)
-WT_node_pseudo_new <- data.frame(row.names(test$condition_1),test$condition_1$pseudotime, test$condition_1$align, row.names =row.names(test$condition_1) )
-WT_node_pseudo <- data.frame(pseudotime = WT_tree$pseudotime, row.names = row.names(WT_tree$pseudotime))
-
-WT_cell_pseudo_new <- pseudo_cell_align(WT_cell_pseudo , WT_node_pseudo_new, WT_node_pseudo, window)
-WT_cell_pseudo_new <- WT_cell_pseudo_new[order(match(row.names(WT_cell_pseudo_new), row.names(WT_cell_pseudo))),]
-
-
-KO_sce$oldPseudotime <- KO_sce$slingPseudotime_1
-KO_sce$newPseudotime <- KO_cell_pseudo_new$pseudotime
-WT_sce$oldPseudotime <- WT_sce$slingPseudotime_1
-WT_sce$newPseudotime <- WT_cell_pseudo_new$pseudotime
-KO_sce$Status <- as.factor(KO_cell_pseudo_new$status)
-WT_sce$Status <- as.factor(WT_cell_pseudo_new$status)
-
-KO_obj$oldPseudotime <- KO_sce$slingPseudotime_1
-KO_obj$newPseudotime <- KO_cell_pseudo_new$pseudotime
-WT_obj$oldPseudotime <- WT_sce$slingPseudotime_1
-WT_obj$newPseudotime <- WT_cell_pseudo_new$pseudotime
-KO_obj$Status <- as.factor(KO_cell_pseudo_new$status)
-WT_obj$Status <- as.factor(WT_cell_pseudo_new$status)
 
 source("Scripts/methods/own_method_functions.R")
-output <- TrajDE(list(WT_sce, KO_sce), list(WT_node_pseudo, KO_node_pseudo), output_solution_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
+test <- chunk_node(WT_tree$node_pseudotime, KO_tree$node_pseudotime, output_solution_cut)
+
+
+WT_tree_new <- WT_tree
+WT_tree_new$node_pseudotime <- test$condition_1$pseudotime
+names(WT_tree_new$node_pseudotime) <- names(WT_tree$node_pseudotime)
+
+KO_tree_new <- KO_tree
+KO_tree_new$node_pseudotime <- test$condition_2$pseudotime
+names(KO_tree_new$node_pseudotime) <- names(KO_tree$node_pseudotime)
+
+pdf("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/TrAGEDy_dotplot_align.pdf")
+PlotOutput(WT_tree_new, KO_tree_new, output_solution_cut) + theme(legend.text=element_text(size=15), axis.text.y = element_text(size = 20), axis.text.x = element_text(size = 20), axis.title.y = element_text(size = 20),
+                                                                  axis.title.x = element_text(size = 20))
+dev.off()
+
+
+source("Scripts/methods/own_method_functions.R")
+KO_cell_pseudo_new_new <- pseudo_cell_align_(KO_tree$cell_pseudotime, test$condition_2 , KO_tree$node_pseudotime, window)
+WT_cell_pseudo_new_new <- pseudo_cell_align_(WT_tree$cell_pseudotime, test$condition_1 , WT_tree$node_pseudotime, window)
+
+KO_sce$oldPseudotime <- KO_sce$slingPseudotime_1
+KO_sce$newPseudotime <- KO_cell_pseudo_new_new$pseudotime
+WT_sce$oldPseudotime <- WT_sce$slingPseudotime_1
+WT_sce$newPseudotime <- WT_cell_pseudo_new_new$pseudotime
+KO_sce$Status <- as.factor(KO_cell_pseudo_new_new$status)
+WT_sce$Status <- as.factor(WT_cell_pseudo_new_new$status)
+
+KO_obj$oldPseudotime <- KO_sce$slingPseudotime_1
+KO_obj$newPseudotime <- KO_cell_pseudo_new_new$pseudotime
+WT_obj$oldPseudotime <- WT_sce$slingPseudotime_1
+WT_obj$newPseudotime <- WT_cell_pseudo_new_new$pseudotime
+KO_obj$Status <- as.factor(KO_cell_pseudo_new_new$status)
+WT_obj$Status <- as.factor(WT_cell_pseudo_new_new$status)
+
+WT_tree_new$cell_pseudotime <- WT_cell_pseudo_new_new$pseudotime
+names(WT_tree_new$cell_pseudotime) <- row.names(WT_cell_pseudo_new_new)
+
+KO_tree_new$cell_pseudotime <- KO_cell_pseudo_new_new$pseudotime
+names(KO_tree_new$cell_pseudotime) <- row.names(KO_cell_pseudo_new_new)
+
+tragedy_merge <- merge(WT_obj, y = KO_obj)
+
+saveRDS(tragedy_merge, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/objects/tragedy_merge_obj.rds")
+
+
+tragedy_start_time <- Sys.time()
+source("Scripts/methods/own_method_functions.R")
+output <- TrajDE_(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
+tragedy_end_time <- Sys.time()
+time_taken_TrAGEDy <- tragedy_end_time - tragedy_start_time
 
 gene_output <- output[[1]]
 
@@ -200,6 +198,136 @@ for(i in 1:length(gene_output)){
   
 }
 
+combined_seurat <- readRDS("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/objects/WT_ZC3H20_with_phate.rds")
+
+DimPlot(combined_seurat, label = T)
+
+combined_seurat$celltype <- Idents(combined_seurat)
+
+combined_seurat <- subset(combined_seurat, celltype != "SS A" & celltype != "SS B")
+
+DimPlot(combined_seurat, label = T)
+
+combined_seurat$celltype.genotype <- paste(Idents(combined_seurat), combined_seurat$line, sep = "_")
+Idents(combined_seurat) <- "celltype.genotype"
+
+
+seurat_gene_output <- list()
+
+seurat_start_time <- Sys.time()
+for (i in 1:length(unique(combined_seurat$celltype))){
+  
+  current_ident <- unique(as.character(combined_seurat$celltype))[i]
+  
+  current <- FindMarkers(combined_seurat, ident.1 = paste0(current_ident, "_WT"), ident.2=paste0(current_ident, "_ZC3H20_KO"), logfc.threshold  =0.5, min.pct = 0.1)
+  
+  current <- subset(current, p_val_adj < 0.05)
+  
+  seurat_gene_output[[current_ident]] <- current
+}
+seurat_end_time <- Sys.time()
+time_taken_seurat <- seurat_end_time - seurat_start_time
+
+
+seurat_WT_de <- c()
+seurat_KO_de <- c()
+
+for (i in 1:length(seurat_gene_output)){
+  current <- seurat_gene_output[[i]]
+  
+  if(length(current[,1]) != 0){
+    WT_subset <- subset(current, avg_log2FC > 0 )
+    KO_subset <- subset(current, avg_log2FC < 0 )
+    
+    current_WT <- row.names(WT_subset)
+    
+    current_KO <- row.names(KO_subset)
+    
+    seurat_WT_de <- append(seurat_WT_de, current_WT)
+    seurat_KO_de <- append(seurat_KO_de, current_KO)
+  }
+  
+}
+
+
+seurat_WT_de <- unique(seurat_WT_de)
+seurat_KO_de <- unique(seurat_KO_de)
+seurat_unique <- unique(c(seurat_KO_de, seurat_WT_de))
+
+
+TrAGEDy_noSeurat <- setdiff(unique_new, seurat_unique)
+
+TrAGEDy_noSeurat_WT <- setdiff(unique_new_WT, seurat_unique)
+TrAGEDy_noSeurat_KO <- setdiff(unique_new_KO, seurat_unique)
+
+seurat_noTrAGEDy_WT <- setdiff(seurat_WT_de, unique_new)
+seurat_noTrAGEDy_KO <- setdiff(seurat_KO_de, unique_new)
+
+#open tradeseq DE genes
+tradeseq_gene_output <- list()
+tradeseq_genes_all <- c()
+
+for(i in 1:4){
+  current <- read.delim(paste0("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/trade_seq_win",i, ".csv" ), sep = ",")
+  tradeseq_gene_output[[i]] <- current
+  tradeseq_genes_all <- append(tradeseq_genes_all, current$X)
+  
+}
+
+tradeseq_genes_all <- unique(tradeseq_genes_all)
+
+TrAGEDy_noSeurat_noTradeseq <- str_replace(setdiff(unique_new, c(seurat_unique, tradeseq_genes_all)), "Tbrucei---", "")
+
+TrAGEDy_noSeuratTradeSeq_WT <- str_replace(setdiff(unique_new_WT, c(seurat_unique, tradeseq_genes_all)), "Tbrucei---", "" )
+TrAGEDy_noSeuratTradeSeq_KO <- str_replace(setdiff(unique_new_KO, c(seurat_unique, tradeseq_genes_all)), "Tbrucei---", "")
+
+seurat_noTrAGEDy_noTradeseq <- str_replace(setdiff(seurat_unique, c(unique_new, tradeseq_genes_all)), "Tbrucei---", "")
+
+Tradeseq_noTrAGEDy_noSeurat <- str_replace(setdiff(tradeseq_genes_all, c(unique_new, seurat_unique)), "Tbrucei---", "")
+
+#save window information for TrAGEDy
+for(i in 1:length(gene_output)){
+  current <- gene_output[[i]]
+  
+  write.csv(current, paste0("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/window_",i, ".csv" ))
+  
+}
+
+#save cluster information for seurat
+for(i in 1:length(seurat_gene_output)){
+  current <- seurat_gene_output[[i]]
+  
+  write.csv(current, paste0("/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/cluster_",names(seurat_gene_output)[i], ".csv" ))
+  
+}
+
+write.csv(Tradeseq_noTrAGEDy_noSeurat, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/tradeseq_noTrAGEDy_noSeurat.csv")
+write.csv(TrAGEDy_noSeurat_noTradeseq, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/TrAGEDy_noTradeSeq_noSeurat.csv")
+write.csv(seurat_noTrAGEDy_noTradeseq, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/seurat_noTrAGEDy_noTradeseq.csv")
+
+
+write.csv(str_replace_all(unique_new , "Tbrucei---", "") , "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/TrAGEDy_all.csv")
+write.csv(str_replace_all(seurat_unique , "Tbrucei---", ""), "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/seurat_all.csv")
+write.csv(str_replace_all(tradeseq_genes_all , "Tbrucei---", ""), "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/tables/tradeseq_all.csv")
+
+
+#Get venn diagram of intersection of DE gene lists
+
+library(VennDiagram)
+library(RColorBrewer)
+myCol <- c("#619cff", "#f8766d", "#00ba38")
+
+# Chart
+venn.diagram(
+  x = list(unique_new, seurat_unique, tradeseq_genes_all),
+  category.names = c("TrAGEDy" , "Seurat" , "Tradeseq"),
+  filename = "TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/venn_diagram_0.5logfc.png",
+  lwd = 2,
+  lty = 'blank',
+  fill = myCol,
+  cat.cex = 1
+)
+
 all_venn <- list()
 
 
@@ -215,11 +343,8 @@ for(i in 1:length(tradeseq_gene_output)){
   all_venn[[ paste0("tradeseq_knot_", i)  ]] <- tradeseq_gene_output[[i]]$X
 }
 
-
+#Create Upset plot
 library(UpSetR)
-
-#create data frame
-
 
 all_genes <- unique(c(unique_new, seurat_unique, tradeseq_genes_all))
 
@@ -241,20 +366,22 @@ for(i in 1:length(all_genes)){
   
 }
 
-upset(as.data.frame(upset_df), sets = rev(names(all_venn)), keep.order = T, order.by = "freq", text.scale = 2, point.size = 3, nintersects = 10, mb.ratio = c(0.6,0.4))
+upset_out <- upset(as.data.frame(upset_df), sets = rev(names(all_venn)), keep.order = T, order.by = "freq", text.scale = 2, point.size = 2.2, nintersects = 6)
+upset_out
+upset_out <- upset(as.data.frame(upset_df), sets = rev(names(all_venn)), keep.order = T, order.by = "freq", text.scale = 2, point.size = 3, nintersects = 10, mb.ratio = c(0.4,0.6))
+
+pdf(file = "TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/Upset.pdf",
+    onefile = TRUE, width = 12, height = 10)
+upset_out
+dev.off()
 
 
-output_all <- TrajDE(list(WT_sce, KO_sce), list(WT_node_pseudo, KO_node_pseudo), path_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T, own.genes = all_genes)
+#Plot Heatmap
+genes_test <- unique_new
 
-gene_output_all <- output_all[[1]]
+output <- TrajDE_(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T, own.genes = genes_test)
 
-#The genes in our dataset all start with the prefix "Tbrucei---"
-#To make plotting easier, we will strip them from the genes
-
-for (i in 1:length(gene_output)){
-  gene_output[[i]][, "gene_name"] <- str_replace(gene_output[[i]][, "gene_name"], "Tbrucei---", "")
-  row.names(gene_output[[i]]) <- str_replace(row.names(gene_output[[i]]), "Tbrucei---", "")
-}
+gene_output_all <- output[[1]]
 
 for (i in 1:length(gene_output_all)){
   gene_output_all[[i]][, "gene_name"] <- str_replace(gene_output_all[[i]][, "gene_name"], "Tbrucei---", "")
@@ -285,7 +412,7 @@ for(i in 1:length(pval_mtx[1,])){
   current_logfc <- logfc_mtx[sig_genes,i]
   current_logfc <- current_logfc[order(abs(current_logfc), decreasing = T)]
   
-  if(length(current_logfc < 15)){
+  if(length(current_logfc) < 15){
     top15 <- append(top15, names(current_logfc))
     
   }
@@ -301,6 +428,15 @@ top15 <- unique(top15)
 
 top15 <- str_replace(top15, "Tbrucei---", "")
 
+logfc_mtx <- logfc_mtx[top15,]
+
 #Finally, we can plot the resulting gene list
 PlotWindowHeatmap(gene_output_all, gene_output, top15)
+
+write.csv(logfc_mtx, "TrAGEDy_V2/figures/supplementary/BruceiHeatmapGenes.csv")
+
+pdf(file = "TrAGEDy_V2/Tbrucei_Zc3h20_KO/plots/top15_heatmap.pdf",
+    onefile = TRUE, width = 8, height = 11)
+PlotWindowHeatmap(gene_output_all, gene_output, top15)
+dev.off()
 
