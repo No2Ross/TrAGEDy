@@ -127,8 +127,8 @@ PlotOutput(WT_tree_new, KO_tree_new, output_solution_cut) + theme(legend.text=el
 dev.off()
 
 source("Scripts/methods/own_method_functions.R")
-KO_cell_pseudo_new_new <- pseudo_cell_align_(KO_tree$cell_pseudotime, test$condition_2 , KO_tree$node_pseudotime, pseudo_end / 90)
-WT_cell_pseudo_new_new <- pseudo_cell_align_(WT_tree$cell_pseudotime, test$condition_1 , WT_tree$node_pseudotime, pseudo_end / 90)
+KO_cell_pseudo_new_new <- pseudo_cell_align(KO_tree$cell_pseudotime, test$condition_2 , KO_tree$node_pseudotime, pseudo_end / 90)
+WT_cell_pseudo_new_new <- pseudo_cell_align(WT_tree$cell_pseudotime, test$condition_1 , WT_tree$node_pseudotime, pseudo_end / 90)
 
 WT_tree_new$cell_pseudotime <- WT_cell_pseudo_new_new$pseudotime
 names(WT_tree_new$cell_pseudotime) <- row.names(WT_cell_pseudo_new_new)
@@ -158,7 +158,7 @@ saveRDS(tragedy_merge, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tcell_Bcl11b_KO/objects/
 #Find DE genes - TrAGEDy
 
 start_time_tragedy <- Sys.time()
-output <- TrajDE_(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 6, 
+output <- TrajDE(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 6, 
                   overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.75, all.genes = F, test_use = "wilcox", correct = T)
 
 
