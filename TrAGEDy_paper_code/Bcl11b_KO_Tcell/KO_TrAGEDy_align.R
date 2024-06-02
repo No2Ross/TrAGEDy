@@ -156,8 +156,8 @@ PlotOutput(KO_1_tree_aligned, KO_2_tree_aligned, alignment)
 dev.off()
 
 source("Scripts/methods/own_method_functions.R")
-KO_1_cell_pseudo_new <- pseudo_cell_align_(KO_1_tree$cell_pseudotime, test$condition_1 , KO_1_tree$node_pseudotime, window)
-KO_2_cell_pseudo_new <- pseudo_cell_align_(KO_2_tree$cell_pseudotime, test$condition_2 , KO_2_tree$node_pseudotime, window)
+KO_1_cell_pseudo_new <- pseudo_cell_align(KO_1_tree$cell_pseudotime, test$condition_1 , KO_1_tree$node_pseudotime, window)
+KO_2_cell_pseudo_new <- pseudo_cell_align(KO_2_tree$cell_pseudotime, test$condition_2 , KO_2_tree$node_pseudotime, window)
 
 PlotOutput(KO_1_tree_aligned, KO_2_tree_aligned, output_solution_cut) + theme(legend.text=element_text(size=15), axis.text.y = element_text(size = 20), axis.text.x = element_text(size = 20), axis.title.y = element_text(size = 20),
                                                                   axis.title.x = element_text(size = 20))
