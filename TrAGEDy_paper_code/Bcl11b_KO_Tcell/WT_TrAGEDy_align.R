@@ -153,8 +153,8 @@ pdf("/Users/rosslaidlaw/R/TrAGEDy_V2/Tcell_Bcl11b_KO/plots/PlotOutput_aligned_WT
 PlotOutput(WT_1_tree_aligned, WT_2_tree_aligned, output_solution_cut)
 dev.off()
 
-WT_1_cell_pseudo_new <- pseudo_cell_align_(WT_1_tree$cell_pseudotime, test$condition_1 , WT_1_tree$node_pseudotime, window)
-WT_2_cell_pseudo_new <- pseudo_cell_align_(WT_2_tree$cell_pseudotime, test$condition_2 , WT_2_tree$node_pseudotime, window)
+WT_1_cell_pseudo_new <- pseudo_cell_align(WT_1_tree$cell_pseudotime, test$condition_1 , WT_1_tree$node_pseudotime, window)
+WT_2_cell_pseudo_new <- pseudo_cell_align(WT_2_tree$cell_pseudotime, test$condition_2 , WT_2_tree$node_pseudotime, window)
 
 
 #Add metadata
