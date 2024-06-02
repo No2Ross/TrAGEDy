@@ -1,6 +1,13 @@
 library(tidyverse)
 library(dyngen)
 
+library(unixtools)
+
+#set.tempdir("pooling-scRNA/")
+ulimit::memory_limit(50000)
+setwd("/datastore/Ross/TrAGEDy_V2")
+
+
 set.seed(2)
 
 backbone <- backbone_linear()
@@ -8,10 +15,10 @@ backbone <- backbone_linear()
 config <-
   initialise_model(
     backbone = backbone,
-    num_cells = 2000,
+    num_cells = 1500,
     num_tfs = nrow(backbone$module_info),
-    num_targets = 300,
-    num_hks = 300,
+    num_targets = 250,
+    num_hks = 150,
     simulation_params = simulation_default(
       census_interval = 10, 
       ssa_algorithm = ssa_etl(tau = 300 / 3600),
@@ -59,3 +66,6 @@ model_2 <- model_2_config %>%
 model_1_seurat <- as_seurat(model_1)
 model_2_seurat <- as_seurat(model_2)
 
+
+saveRDS(model_1_seurat, "simulation/negative_ctrl/negative_control_1.rds")
+saveRDS(model_2_seurat, "simulation/negative_ctrl/negative_control_2.rds")
