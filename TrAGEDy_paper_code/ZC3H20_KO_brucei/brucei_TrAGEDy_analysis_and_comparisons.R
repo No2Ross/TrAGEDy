@@ -121,8 +121,8 @@ dev.off()
 
 
 source("Scripts/methods/own_method_functions.R")
-KO_cell_pseudo_new_new <- pseudo_cell_align_(KO_tree$cell_pseudotime, test$condition_2 , KO_tree$node_pseudotime, window)
-WT_cell_pseudo_new_new <- pseudo_cell_align_(WT_tree$cell_pseudotime, test$condition_1 , WT_tree$node_pseudotime, window)
+KO_cell_pseudo_new_new <- pseudo_cell_align(KO_tree$cell_pseudotime, test$condition_2 , KO_tree$node_pseudotime, window)
+WT_cell_pseudo_new_new <- pseudo_cell_align(WT_tree$cell_pseudotime, test$condition_1 , WT_tree$node_pseudotime, window)
 
 KO_sce$oldPseudotime <- KO_sce$slingPseudotime_1
 KO_sce$newPseudotime <- KO_cell_pseudo_new_new$pseudotime
@@ -151,7 +151,7 @@ saveRDS(tragedy_merge, "/Users/rosslaidlaw/R/TrAGEDy_V2/Tbrucei_Zc3h20_KO/object
 
 tragedy_start_time <- Sys.time()
 source("Scripts/methods/own_method_functions.R")
-output <- TrajDE_(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
+output <- TrajDE(list(WT_sce, KO_sce), list(WT_tree_new, KO_tree_new), output_solution_cut, n_windows = 4, overlap = 1, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes = F, test_use = "wilcox", correct = T)
 tragedy_end_time <- Sys.time()
 time_taken_TrAGEDy <- tragedy_end_time - tragedy_start_time
 
