@@ -4,49 +4,72 @@ library(RColorBrewer)
 library(SingleCellExperiment)
 library(slingshot)
 library(tradeSeq)
-library(ggborderline)
 
-tryp_integrated <- readRDS("path/to/integrated/object/WT_ZC3H20_with_phate.rds")
+library(BiocParallel)
 
-DimPlot(tryp_integrated, reduction = "phate")
+library(unixtools)
 
-tryp_integrated <- AddMetaData(tryp_integrated, tryp_integrated@active.ident, "type")
+mean.fxn <- function(x) {
+  return(log(x = (rowSums(x = expm1(x = x)) + 1)/NCOL(x), base = 2))
+  
+}
 
-#subset out stumpy
-tryp_integrated <- subset(tryp_integrated, type != "SS A" & type != "SS B")
+setwd("/datastore/Ross/TrAGEDy_V2/Tbrucei")
 
-DimPlot(tryp_integrated, reduction = "phate", group.by = "cell_type")
+#set.tempdir("pooling-scRNA/")
+ulimit::memory_limit(60000)
 
-tryp_integrated <- AddMetaData(tryp_integrated, tryp_integrated@active.ident, "cell_type")
-
-tryp_sce <- as.SingleCellExperiment(tryp_integrated, assay = "RNA")
-tryp_sce <- slingshot(tryp_sce, reducedDim = 'PHATE', clusterLabels = tryp_sce@colData@listData[["cell_type"]], start.clus = "LS A.1")
+tryp_sce <- readRDS("/datastore/Ross/TrAGEDy_V2/Tbrucei/objects/WT_ZC3H20_with_phate_sce.rds")
 tryp_sling <- SlingshotDataSet(tryp_sce)
 
-#tradeseq
-set.seed(3)
-icMat <- evaluateK(counts = as.matrix(assays(tryp_sce)$counts),
-                   sds = tryp_sling,
-                   nGenes = 300,
-                   k = 4:10)
+weights_subset <- tryp_sling@curves$Lineage1$w[which(names(tryp_sling@curves$Lineage1$w) %in% colnames(tryp_sce))]
 
-pseudotime <- slingPseudotime(tryp_sling, na = FALSE)
-cellWeights <- slingCurveWeights(tryp_sling)
 
-sce <- fitGAM(tryp_sce, conditions = factor(colData(tryp_sce)$line),
-              nknots = 9, verbose = FALSE)
+#tryp_sce <- subset(tryp_sce, , is.na(slingPseudotime_1) == FALSE)
+
+#tryp_sce$slingPseudotime_2 <- NULL
+
+# set.seed(3)
+# icMat <- evaluateK(counts = as.matrix(assays(tryp_sce)$counts),
+#                    pseudotime = tryp_sce$slingPseudotime_1,
+#                    cellWeights = weights_subset,
+#                    conditions = factor(colData(tryp_sce)$line),
+#                    nGenes = 300,
+#                    k = 4:12)
+# 
+# rm(Tcell_sling)
+# rm(icMat)
+# gc()
+
+start.time = Sys.time()
+
+rm(tryp_integrated)
+rm(tryp_sling)
+gc()
+
+sce_gam <- fitGAM(tryp_sce, conditions = factor(colData(tryp_sce)$line),
+              nknots = 8, verbose = FALSE)
+
+# saveRDS(sce_gam, "/datastore/Ross/TrAGEDy_V2/Tbrucei/objects/brucei_sce_GAM.rds")
+# saveRDS(tryp_sce, "/datastore/Ross/TrAGEDy_V2/Tbrucei/objects/brucei_sce.rds")
+# 
+# 
+# sce_gam <- readRDS("/datastore/Ross/TrAGEDy_V2/Tbrucei/objects/brucei_sce_GAM.rds")
+# tryp_sce <- readRDS("/datastore/Ross/TrAGEDy_V2/Tbrucei/objects/brucei_sce.rds")
+
+sce_gam$cell_id <- colnames(sce_gam)
+tryp_sce$cell_id <- colnames(tryp_sce)
 
 WT_sce <- subset(tryp_sce, , line == "WT")
 KO_sce <- subset(tryp_sce, , line == "ZC3H20_KO")
 
 #knots are based on the quantiles
-quantile_limits <- quantile(sce$slingPseudotime_1, probs = seq(0,1,0.125))
+quantile_limits <- quantile(tryp_sce$slingPseudotime_1, probs = seq(0,1,0.11)) 
 
 #PCT
-
 invalid_genes_list <- list()
 
-windows <- list(c(1,2,3), c(3,4,5), c(5,6,7), c(7,8,9))
+windows <- list(c(1,2), c(3,4), c(5,6), c(7,8))
 
 for(i in 1:length(windows)){
   knot_min <- min(windows[[i]])
@@ -69,26 +92,42 @@ for(i in 1:length(windows)){
   invalid_WT <- count_mtx_WT[which(count_mtx_WT < 0.1)]
   invalid_KO <- count_mtx_KO[which(count_mtx_KO < 0.1)]
   
-  invalid_genes <- intersect(names(invalid_KO), names(invalid_WT))
+  invalid_genes_pct <- intersect(names(invalid_KO), names(invalid_WT))
   
-  invalid_genes_list[[i]] <- invalid_genes
+  #Log2fc section
+  
+  WT_log2fc <- mean.fxn(current_WT@assays@data@listData$logcounts)
+  KO_log2fc <- mean.fxn(current_KO@assays@data@listData$logcounts)
+  
+  current_log2fc <- WT_log2fc - KO_log2fc
+  
+  invalid_genes_log2fc <- current_log2fc[current_log2fc < 0.5 & current_log2fc > -0.5]
+  
+  invalid_genes_list[[i]] <- unique(c(invalid_genes_pct , names(invalid_genes_log2fc)))
+
 }
+
+
 
 
 cond_test_results <- list()
 
-windows <- list(c(1,2,3), c(3,4,5), c(5,6,7), c(7,8,9))
 
-for (i in 1:4){
-  cond_current_results <- conditionTest(sce, knots = c(min(windows[[i]]), max(windows[[i]])), l2fc = 0.5)
+for (i in 1:length(windows)){
+  cond_current_results <- conditionTest(sce_gam, knots = c(windows[[i]][1], windows[[i]][2]), l2fc = 0)
   cond_test_results[[i]] <- cond_current_results
 }
 
 results_list_cp <- cond_test_results
 
+
+
 cond_test_results <- results_list_cp
 
+#adjust p_value and subset
+
 for(i in 1:4){
+  invalid_genes <- invalid_genes_list[[i]]
   current <- cond_test_results[[i]]
   current$padj <- p.adjust(current$pvalue, "bonferroni")
   current <- current[which(is.na(current$padj) == F),]
@@ -98,101 +137,24 @@ for(i in 1:4){
   
 }
 
-#Load in TrAGEDy aligned datasets
-WT_sce <- readRDS("path/to/TrAGEDy/aligned/WT/WT_aligned.rds")
-KO_sce <- readRDS("path/to/TrAGEDy/aligned/KO/KO_aligned.rds")
+end_time <- Sys.time()
+time_taken <- end_time - start.time
 
-WT_sce_GAM <- fitGAM(WT_sce@assays@data$counts, pseudotime = WT_sce$newPseudotime, cellWeights = rep(1, length(WT_sce$newPseudotime)))
+#Time difference of 177.716 hours
+#Time difference of 177.4232 hours
 
-KO_sce_GAM <- fitGAM(KO_sce@assays@data$counts, pseudotime = KO_sce$newPseudotime, cellWeights = rep(1, length(KO_sce$newPseudotime)))
+unique_gene <- c()
 
-WT_sce$cell_id <- colnames(WT_sce)
-KO_sce$cell_id <- colnames(KO_sce)
+for(i in 1:4){
+  unique_gene <- append(unique_gene, row.names(cond_test_results[[i]]) )
+}
 
-WT_sce <- subset(WT_sce, , Status == "align")
-KO_sce <- subset(KO_sce, , Status == "align")
-
-aligned_WT <- WT_sce$cell_id
-aligned_KO <- KO_sce$cell_id
-
-WT_sce_GAM$cell_id <- colnames(WT_sce_GAM)
-KO_sce_GAM$cell_id <- colnames(KO_sce_GAM)
-
-WT_sce_GAM <- subset(WT_sce_GAM, , cell_id %in% aligned_WT)
-KO_sce_GAM <- subset(KO_sce_GAM, , cell_id %in% aligned_KO)
-
-g <- paste0("Tbrucei---","Tb927.9.5900")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("Glutamate dehydrogenase") + theme(text = element_text(size = 30)) 
-
-
-#2-amino-3-ketobutyrate coenzyme A ligase (KBL)
-g <- paste0("Tbrucei---","Tb927.8.6060")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("AKCT") + theme(text = element_text(size = 30)) 
-
-
-g <- paste0("Tbrucei---","Tb927.6.2790")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("L-threonine 3-dehydrogenase") + theme(text = element_text(size = 30)) 
-
-g <- paste0("Tbrucei---","Tb927.6.4440")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("RBP42") + theme(text = element_text(size = 30)) 
-
-g <- paste0("Tbrucei---","Tb927.10.12800")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("ZC3H38") + theme(text = element_text(size = 30)) 
-
-
-g <- paste0("Tbrucei---","Tb927.7.6860")
-
-obj1_WT <- plotSmoothers(WT_sce_GAM, assays(WT_sce_GAM)$counts, gene = g, lwd = 4)
-obj1_KO <- plotSmoothers(KO_sce_GAM, assays(KO_sce_GAM)$counts, gene = g, lwd = 4)
-
-ggplot() + geom_point(aes(obj1_KO$data$time, log1p(obj1_KO$data$gene_count), col = "KO")) + geom_line(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), lwd = 4) +
-  geom_borderline(aes(obj1_KO$layers[[2]]$data$time, obj1_KO$layers[[2]]$data$gene_count, col = "KO"), size=2, bordercolour = "black") + 
-  geom_point(aes(obj1_WT$data$time, log1p(obj1_WT$data$gene_count), col = "WT")) + geom_line(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), lwd = 4) +
-  geom_borderline(aes(obj1_WT$layers[[2]]$data$time, obj1_WT$layers[[2]]$data$gene_count, col = "WT"), size=2, bordercolour = "black")+
-  xlab("Pseudotime") +ylab("Log(expression + 1)") + ggtitle("ESAG5") + theme(text = element_text(size = 30)) 
+unique_gene <- unique(unique_gene)
 
 
 
-
+for( i in 1:4){
+  write.csv(cond_test_results[[i]], paste0("/datastore/Ross/TrAGEDy_V2/Tbrucei/DEG_files/trade_seq_win",i,".csv") )
+}
 
 
