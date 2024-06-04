@@ -35,6 +35,8 @@ library(dplyr)
 library(stats)
 library(stringr)
 library(rgl)
+
+setwd("path/to/TrAGEDy_example.R")
 ```
 
 ## Step 1 - Create trajectories 
@@ -44,10 +46,10 @@ TrAGEDy makes no assumptions about what Trajectory Inference package is used, it
 We supply the objects with pseudotime already included, as well as the feature space gene list. While we are setting up our Zenodo, please contact us for the WT and KO files.
 
 ```
-WT_1_sce <- readRDS("path/to/tutorial/WT_1_sce.rds")
-WT_2_sce <- readRDS("path/to/tutorial/WT_2_sce.rds")
+WT_1_sce <- readRDS("WT_1_sce.rds")
+WT_2_sce <- readRDS("WT_2_sce.rds")
 
-features <- read.csv("path/to/tutorial/feature_space.csv", row.names = 1)
+features <- read.csv("feature_space.csv", row.names = 1)
 features <- features$x
 ```
 
