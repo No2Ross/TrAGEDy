@@ -106,7 +106,7 @@ The path of the data through the matrix
 PlotAlignment(path_tragedy_cut, penalty_mtx_cut)
 ```
 
-![](TrAGEDy_example/PlotAlignment.png)
+![](TrAGEDy_example/plotAlignment.png)
 
 or with visualisation of the pseudotime of the interpolated points and their matches
 
