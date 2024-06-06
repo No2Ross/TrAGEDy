@@ -975,9 +975,7 @@ permutation_test <- function(group_1, group_2){
     }
     
     sample_1 <- sample(combination, split_n)
-    
-    print(sample_1)
-    
+        
     perm_1 <- combination[which(combination %in% sample_1)]
     perm_2 <- combination[which(!(combination %in% sample_1))]
     
@@ -986,9 +984,7 @@ permutation_test <- function(group_1, group_2){
   }
   
   result <- length(which(perm_test >= initial)) / permutations
-  
-  print(result)
-  
+    
   return(list(initial, perm_test))
   
 }
@@ -1234,22 +1230,21 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
 
 #scales values
 scale_function <- function(vals, scale_max, scale_min){
-  #print(paste0("values scale: ",vals))
-  #print(paste0("upper squish", scale_max))
-  #print(paste0("lower squish", scale_min))
-  
-  
   
   output <- ( (vals - min(vals)) / (max(vals) - min(vals)) ) *(  (scale_max - scale_min)) + scale_min
-  
-  
-  
     
   return(output)
   
 }
 
-dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method){
+#Find the dissimilarity matrix of interpolated points transcriptome
+
+#exp_mtx1 = numeric matrix containing the interpolated point expression values for dataset 1
+#exp_mtx2 = numeric matrix containing the interpolated point expression values for dataset 2
+#dis_method = String detailing which metric should be used to assess transcriptional dissimilarity between the interpolated points. Options are: 
+#euclidean distance ("euclidean"), spearman rho correlation ("spearman", default) or any other metric that can be passed into the R base cor() function.
+
+dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method = "spearman"){
   if (dis_method != "euclidean"){
     dis_matrix <- cor(cbind(exp_mtx1, exp_mtx2), method=dis_method)
     dis_matrix <- 1- dis_matrix
@@ -1317,7 +1312,6 @@ pseudo_cell_align <- function(cell_pseudo, node_information, node_pseudo , windo
     
   }
   
-  # return(list(noalign_pseudo, align_pseudo))
   
   noalign_pseudo <- noalign_pseudo[-1,]
   align_pseudo <- align_pseudo[-1,]
@@ -1413,15 +1407,9 @@ PlotOutput<- function(tree_1, tree_2, alignment){
     plot_counter <- plot_counter + 1
   }
   
-  #return(plot_df)
   
   plot_df <- plot_df[-1,]
-  
-  print(length(unaligned_nodes))
-  print(unaligned_nodes)
-  print(length(seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1)))
-  print(length(c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])[ is.na(c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])) == F ]))
-  print(c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )))
+
   
   #add unaligned nodes
   unaligned_frame <- data.frame("node" = unaligned_nodes,
@@ -1432,7 +1420,6 @@ PlotOutput<- function(tree_1, tree_2, alignment){
   
   plot_df <- rbind(plot_df, unaligned_frame)
 
-  #print(max(plot_df$pseudotime))
   
   print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
   
@@ -1492,7 +1479,20 @@ PlotAlignment <- function(alignment, score_mtx){
 #ALternatively user defines how many unique matches to include in window 
 #Window size is how many windows you want in total
 
-TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use, correct = T){
+#sce_obj = list of SingleCellExperiment objects (one for each of the two datasets being compared)
+#traj_info = list of the aligned trees of the interpolated points (one for each of the two datasets being compared)
+#matches = the output of cut_deviate()
+#n_windows = Integer for the number of comparison windows over the aligned pseudotime axis
+#overlap = Integer for the number of interpolated point overlap there is between adjacent windows of comparison
+#p_val = Float for the significance threshold when calculating p-values
+#min.pct = Float for the minimum proportion of cells (for one of the conditions) that a gene needs to be expressed in, to count as being differentially expressed
+#logfc = Float for the absolute Log2 fold change that a gene needs to have between the two conditions, to count as being differentially expressed
+#all.genes = Boolean on whether to test all the genes in the datasets or not
+#own.genes = String vector containing a list of genes the user would like to test (adjustment of p-values will still be based on all the genes)
+#test.use = String detailing what statistical test to use when calculating p-values. Options are: t-test ("t"), mann-whitney U test ("wilcox", default) and permutation ("perm")
+#correct = Boolean value for whether to correct the p-values using Bonferroni multiple test correction or not
+
+TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use = "wilcox", correct = T){
   
   if(test_use == "t"){
     test_function <- function(x,y){t.test(x,y)}
