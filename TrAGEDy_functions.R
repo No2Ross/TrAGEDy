@@ -37,23 +37,37 @@ nodeExpressionEstimate <- function(cell_exp_mtx, tree, window_size, adjust.windo
   
   output <- list()
   
-  if(adjust.window){
-    #Get window sizes for each interpolated point
-    hist_output <- hist(cell_pseudo, breaks = seq(min(cell_pseudo) , max(cell_pseudo), length.out = (length(node_pseudo) + 1 ) ) )
-    
-    #If it's 0, then it won't calculate it
-    #hist_output$counts <- hist_output$counts + 1
-    
-    hist_mean <- mean(hist_output$breaks)
-    
-    alt_hist_mean <- hist_output$counts[min(which(hist_output$breaks > mean(cell_pseudo)))]
-    
-    #If the interpolated point is in an area of pseudotime with a cell density less than the mean, we increase the window size. 
-    #If it's an area of high cell density, we decrease the window
-    window_vector <- window * (1 - ( ( hist_output$counts- alt_hist_mean ) / max(hist_output$counts)) )
-    
-  }
+  #Old adjust window
+  # if(adjust.window){
+  #   #Get window sizes for each interpolated point
+  #   hist_output <- hist(cell_pseudo, breaks = seq(min(cell_pseudo) , max(cell_pseudo), length.out = (length(node_pseudo) + 1 ) ) )
+  # 
+  #   #If it's 0, then it won't calculate it
+  #   #hist_output$counts <- hist_output$counts + 1
+  # 
+  #   hist_mean <- mean(hist_output$breaks)
+  # 
+  #   alt_hist_mean <- hist_output$counts[min(which(hist_output$breaks > mean(cell_pseudo)))]
+  # 
+  #   #If the interpolated point is in an area of pseudotime with a cell density less than the mean, we increase the window size.
+  #   #If it's an area of high cell density, we decrease the window
+  #   window_vector <- window * (1 - ( ( hist_output$counts- alt_hist_mean ) / max(hist_output$counts)) )
+  # 
+  # }
   
+  if(adjust.window){
+    cell_totals <- c()
+
+    for(i in node_pseudo){
+
+      cell_n <- length(which(cell_pseudo >= i - window & cell_pseudo <= i + window))
+
+      cell_totals <- append(cell_totals, cell_n)
+    }
+
+    window_vector <- window * (1 - ( ( cell_totals- mean(cell_totals) ) / max(cell_totals)) )
+  }
+
   else{
     window_vector <- rep( window, length(node_pseudo) )
   }
@@ -278,7 +292,6 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type, method){
   traceback_mtx <- matrix(0, nrow = length(row.names(penalty_mtx)), ncol = length(colnames(penalty_mtx)))
   
   traceback_mtx[1,1] <- penalty_mtx[1,1]
-  
   traceback_mtx[1,] <- own_fib_ROC(penalty_mtx[1,])
   
   traceback_mtx[,1] <- own_fib_ROC(penalty_mtx[,1])
@@ -309,13 +322,17 @@ ROC_fill_mtx <- function(penalty_mtx, cut_type, method){
 }
 
 
-bootstrap_path <- function(input, bootstrap_iterate, bootstrap_len){
+bootstrap_path <- function(input, bootstrap_iterate, bootstrap_len, seed = 100){
   
   result <- c()
   
   for(i in bootstrap_iterate){
     
-    output <- input[sample(seq(1, length(input), 1), size = bootstrap_len, replace = T)]
+    #100 works for the Brucei WT alignment
+    #Tried 42, 100-200
+    sample_index <- {set.seed(seed); sample(seq(1, length(input), 1), size = bootstrap_len, replace = T)}
+    
+    output <- input[sample_index]
     
     result <- append(result, mean(output))
   }
@@ -326,7 +343,7 @@ bootstrap_path <- function(input, bootstrap_iterate, bootstrap_len){
 
 #As some paths will have more connections than others (i.e. longer paths), we will bootstrap each path to be the same length
 
-bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spearman",threshold_method, bootstrap_iterate = 10){
+bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spearman",threshold_method, bootstrap_iterate = 10, seed = 100){
   
   if(threshold_method == "mean"){
     cutoff_metric <- function(x){return(mean(x))}
@@ -348,25 +365,31 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   #Find the point of best (i.e. lowest dissimilarity) initial alignment of the two processes
   choice <- c(min(penalty_mtx[,1]), min(penalty_mtx[1,]))
   
-  ###########       NOTE        #################
-  #Won't work if there are points with the same minimum value
-  choice_index <- c( which( penalty_mtx[,1] == min(penalty_mtx[,1]) ), 
-                     which( penalty_mtx[1,] == min(penalty_mtx[1,]) ) )
+  #If two points have the same value as the minimum, we select the first one to begin with
+  # choice_index <- c( which( penalty_mtx[,1] == min(penalty_mtx[,1]) )[1], 
+  #                    which( penalty_mtx[1,] == min(penalty_mtx[1,]) )[1] )
   
   start_index_choice <- which(choice == min(choice))
   
   if(start_index_choice == 1){
     min_slice <-penalty_mtx[,1]
+    
+    #If two points have the same value as the minimum, we select the first one to begin with
+    choice_index <- which( penalty_mtx[,1] == min(penalty_mtx[,1]) )[1]
   }
   
   else if(start_index_choice == 2){
     min_slice <- penalty_mtx[1,]
+    
+    #If two points have the same value as the minimum, we select the first one to begin with
+    choice_index <- which( penalty_mtx[1,] == min(penalty_mtx[1,]) )[1]
   }
   
   start_min <- c(1,1)
-  start_min[2] <- choice_index[start_index_choice]
+  # start_min[2] <- choice_index[start_index_choice]
+  start_min[2] <- choice_index
   
-  start_min[1] <- find_optimal(min_slice, start_min[1], position = "start")
+  start_min[1] <- find_optimal(min_slice, start_min[2], position = "start")
   
   #Find the point of best (i.e. lowest dissimilarity) last alignment of the two processes
   last_row <- length(penalty_mtx[,1])
@@ -397,10 +420,6 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
 
   #last_start_end <- find_start_end(penalty_mtx, start_min, end_min, threshold_method)
   
-  print("Start and ends")
-  print(start_min)
-  print(end_min)
-  print("")
   # print(last_start_end)
   
   #We add the [1] to the end of the index choices, just in case the alignment runs from the very beginning of both sequences,
@@ -410,18 +429,19 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   
   end_locs <- seq( end_min[ 1 ], end_min[ 2 ],1 )
   
-  print(start_locs)
-  print(end_locs)
-  
   #Iterate through the combinations
   
   paths <- list()
+  
+  #return(list(start_locs, end_locs))
   
   for(i in 1:length(start_locs)){
     start_current <- start_locs[i]
     
     for(j in 1:length(end_locs)){
       end_current <- end_locs[j]
+      
+      #Create if statement for when the cut matrix gets brought down too low
       
       start_loc <- c(start_current,start_current)
       end_loc <- c(end_current,end_current)
@@ -444,23 +464,20 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
       
       penalty_mtx <- dis_mtx_calculator(sequence_1_cut, sequence_2_cut, similarity_method)
       
-      path <- pathfind(penalty_mtx, cut_type = "both", threshold_method)
-    
-      # if(start_current == 3 & end_current == 53){
-      #   return(path)
-      # }
       
-      paths[[paste0(start_current, "_", end_current)]] <- path[,3]
-      
+      #We do not want to pathfind across an alignment that just crosses perfectly vertically or 
+      #horizontally across the dissimilarity matrix.
+      if(dim(penalty_mtx)[1] != 0 & dim(penalty_mtx)[2] != 0){
+        path <- pathfind(penalty_mtx, cut_type = "both", threshold_method)
+        
+        paths[[paste0(start_current, "_", end_current)]] <- path[,3]
 
+      }
+      
     }
     
   }
-  
-  print("Possible start and ends")
-  print(start_locs)
-  print(end_locs)
-  print("")
+
   
   score_mtx <- matrix(0, nrow = length(start_locs), ncol = length(end_locs))
   
@@ -468,14 +485,13 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   row.names(score_mtx) <- as.character(start_locs)
   
   bootstrap_n <- max(lengths(paths))
-  
+
   for(i in names(paths)){
-    
     current_path <- paths[[i]]
     
     current_index <- str_split(i, "_")[[1]]
     
-    score_mtx[current_index[1],current_index[2]] <- bootstrap_path(current_path, bootstrap_iterate,  bootstrap_n)
+    score_mtx[current_index[1],current_index[2]] <- bootstrap_path(current_path, bootstrap_iterate,  bootstrap_n, seed)
     
   }
   
@@ -524,11 +540,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   start_loc <- c(row_index,row_index)
   end_loc <- c(col_index,col_index)
   
-  print("why")
-  print(valid_path)
-  print(start_loc)
-  print(end_loc)
-  print("")
+
   
   start_loc[3-start_index_choice] <- 1
   
@@ -542,8 +554,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
     end_loc[3-end_index_choice] <- length(penalty_mtx_cut[1,])
   }
   
-  print(start_loc)
-  print(end_loc)
+
   
   sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
   sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
@@ -662,7 +673,7 @@ find_optimal <- function(score_slice, point,position, method = "mean"){
   
   #point - numeric vector giving the row (first sequence) and column (second sequence) position of the current optimal point for alignment beginning/end
   #Position - string which tells the function whether we are trying to find the optimal start or end point
-  
+  print(point)
   if(method == "mean"){
     cutoff_metric <- function(x){return(mean(x))}
     
@@ -955,8 +966,7 @@ get_thresholds <- function(alignment, penalty_mtx, method){
 permutation_test <- function(group_1, group_2){
   combination <- c(group_1, group_2)
   
-  print(length(combination))
-  
+
   permutations <- length(combination)/2
   
   initial <- mean(group_1) - mean(group_2)
@@ -975,7 +985,8 @@ permutation_test <- function(group_1, group_2){
     }
     
     sample_1 <- sample(combination, split_n)
-        
+    
+
     perm_1 <- combination[which(combination %in% sample_1)]
     perm_2 <- combination[which(!(combination %in% sample_1))]
     
@@ -984,7 +995,8 @@ permutation_test <- function(group_1, group_2){
   }
   
   result <- length(which(perm_test >= initial)) / permutations
-    
+  
+
   return(list(initial, perm_test))
   
 }
@@ -1090,9 +1102,6 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
   
   choice_index <- which(start_pseudo_choice == min(start_pseudo_choice))[1]
   
-  print(choice_index)
-  print(start_pseudo_choice)
-  
   diff <- abs(start_pseudo_choice[1] - start_pseudo_choice[2])
   
   #If we have unaligned sections at the beginning, it means the initial alignment will accidently overlap with it
@@ -1128,8 +1137,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           diff <- pseudo_choice[3-choice_index] - pseudo_choice[(choice_index)]
           
           node_position <- which(names(pseudo_list[[choice_index]]) == tree_chunk[item,choice_index])[1]
-          print(node_position)
-          
+
           pseudo_list[[choice_index]][node_position:(length(pseudo_list[[choice_index]]))] <- pseudo_list[[choice_index]][node_position:(length(pseudo_list[[choice_index]]))] + diff
           
           seperate_ <- function(input){min(input)}
@@ -1153,8 +1161,7 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           
           #upper_squish <- min( c( pseudo_list[[1]][ tree_chunk_nodes[[1]] , 1 ], pseudo_list[[2]][ tree_chunk_nodes[[2]] , 1 ] ) )
           squish_nodes <- tree_chunk[ which(tree_chunk[,common_index]==tree_chunk[item,common_index]) ,(3-common_index)]
-          print(paste0("squish: ", squish_nodes))
-          
+
           #Finds the nodes that occur after the final matching in this particular multimatch
           after_nodes <-c( names(pseudo_list[[3-common_index]])[ ( which( names(pseudo_list[[3-common_index]]) == squish_nodes[length(squish_nodes)] ) +1 ) ],
                            names(pseudo_list[[common_index]])[pseudo_position+1])
@@ -1163,12 +1170,9 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
           #If one of the values is NA, the sum of after nodes will be more than 0, thus we enter this if statement
           
           if (sum(is.na(after_nodes)) > 0){
-            print("aaaah")
             #The new upper squish becomes the lower squish the average distance between the previous aligned matches
             upper_squish <- lower_squish + median( abs( c(pseudo_list[[common_index]][1:length(pseudo_list[[common_index]])-1]) - c(pseudo_list[[common_index]][2:length(pseudo_list[[common_index]])], pseudo_list[[common_index]][1]) ) )
-            
-            print(lower_squish)
-            print(upper_squish)
+
             # upper_squish <- lower_squish + mean( abs( pseudo_list[[common_index]] - mean(pseudo_list[[common_index]]) ) )
           }
           
@@ -1230,21 +1234,22 @@ chunk_node <- function(cond1_pseudo, cond2_pseudo, tree){
 
 #scales values
 scale_function <- function(vals, scale_max, scale_min){
+  #print(paste0("values scale: ",vals))
+  #print(paste0("upper squish", scale_max))
+  #print(paste0("lower squish", scale_min))
+  
+  
   
   output <- ( (vals - min(vals)) / (max(vals) - min(vals)) ) *(  (scale_max - scale_min)) + scale_min
+  
+  
+  
     
   return(output)
   
 }
 
-#Find the dissimilarity matrix of interpolated points transcriptome
-
-#exp_mtx1 = numeric matrix containing the interpolated point expression values for dataset 1
-#exp_mtx2 = numeric matrix containing the interpolated point expression values for dataset 2
-#dis_method = String detailing which metric should be used to assess transcriptional dissimilarity between the interpolated points. Options are: 
-#euclidean distance ("euclidean"), spearman rho correlation ("spearman", default) or any other metric that can be passed into the R base cor() function.
-
-dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method = "spearman"){
+dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method){
   if (dis_method != "euclidean"){
     dis_matrix <- cor(cbind(exp_mtx1, exp_mtx2), method=dis_method)
     dis_matrix <- 1- dis_matrix
@@ -1266,7 +1271,7 @@ dis_mtx_calculator <- function(exp_mtx1, exp_mtx2, dis_method = "spearman"){
   
   dis_matrix <- t(dis_matrix)
   
-  print( pheatmap::pheatmap(as.matrix(dis_matrix), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA) )
+  #print( pheatmap::pheatmap(as.matrix(dis_matrix), cluster_rows = F, cluster_cols = F, scale="none", border_color = NA) )
   
   return(dis_matrix)
 }
@@ -1280,8 +1285,7 @@ pseudo_cell_align <- function(cell_pseudo, node_information, node_pseudo , windo
   
   cell_pseudo_new <- cellAlign_function(node_pseudo, node_pseudo_new, cell_pseudo, window_size)
   
-  print(length(cell_pseudo))
-  
+
   kmean_output <- cell_capture(cell_pseudo, node_pseudo)
   
   #Some nodes have no cells close to it and have to be removed
@@ -1312,14 +1316,13 @@ pseudo_cell_align <- function(cell_pseudo, node_information, node_pseudo , windo
     
   }
   
+  # return(list(noalign_pseudo, align_pseudo))
   
   noalign_pseudo <- noalign_pseudo[-1,]
   align_pseudo <- align_pseudo[-1,]
   
   output <- rbind(noalign_pseudo, align_pseudo)
-  
-  print(output)
-  print(cell_pseudo)
+
   
   #Keep order of cells the same as it is in the sce and seurat objects
   output <- output[ order( match( output[,1], names(cell_pseudo) ) ),]
@@ -1343,9 +1346,7 @@ test_function <- function(list_input, test.use){
       if (test.use == "t.test"){
         #print(gene)
         
-        print(list_input[[1]][[i]][ gene, ])
-        
-        print(list_input[[2]][[i]][ gene, ])
+
         
         #if ( length(unique(list_input[[1]][[i]][ gene, ])) != 1 & length(unique(list_input[[2]][[i]][ gene, ])) != 1 ){
           test_out <- t.test(list_input[[1]][[i]][ gene, ], list_input[[2]][[i]][ gene, ])
@@ -1407,21 +1408,33 @@ PlotOutput<- function(tree_1, tree_2, alignment){
     plot_counter <- plot_counter + 1
   }
   
+  #return(plot_df)
   
   plot_df <- plot_df[-1,]
 
+  #If there is a 1 to 1 alignment
   
-  #add unaligned nodes
-  unaligned_frame <- data.frame("node" = unaligned_nodes,
-                                "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
-                                "pseudotime" = c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])[ is.na(c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])) == F ],
-                                "condition" = c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )),
-                                "ID" = c( tree_1$ID[unaligned_nodes[which( grepl(cond_names[1],unaligned_nodes) == T)],], tree_2$ID[unaligned_nodes[which( grepl(cond_names[2],unaligned_nodes) == T)],] ) ) 
+  if (dim(alignment)[1] == dim(alignment[alignment$Status == "match",])){
+    print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
+    
+  }
   
-  plot_df <- rbind(plot_df, unaligned_frame)
+  else{
+    
+    #add unaligned nodes
+    unaligned_frame <- data.frame("node" = unaligned_nodes,
+                                  "group" = seq(plot_counter, (plot_counter + length(unaligned_nodes)-1), 1),
+                                  "pseudotime" = c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])[ is.na(c(tree_1$node_pseudotime[unaligned_nodes], tree_2$node_pseudotime[unaligned_nodes])) == F ],
+                                  "condition" = c( rep(cond_names[1], length( which( grepl(cond_names[1],unaligned_nodes) == T) ) ), rep(cond_names[2], length( which( grepl(cond_names[2],unaligned_nodes) == T ) ) )),
+                                  "ID" = c( tree_1$ID[unaligned_nodes[which( grepl(cond_names[1],unaligned_nodes) == T)],], tree_2$ID[unaligned_nodes[which( grepl(cond_names[2],unaligned_nodes) == T)],] ) ) 
+    
+    plot_df <- rbind(plot_df, unaligned_frame)
+    
 
+    print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
+    
+  }
   
-  print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
   
 }
 
@@ -1479,20 +1492,7 @@ PlotAlignment <- function(alignment, score_mtx){
 #ALternatively user defines how many unique matches to include in window 
 #Window size is how many windows you want in total
 
-#sce_obj = list of SingleCellExperiment objects (one for each of the two datasets being compared)
-#traj_info = list of the aligned trees of the interpolated points (one for each of the two datasets being compared)
-#matches = the output of cut_deviate()
-#n_windows = Integer for the number of comparison windows over the aligned pseudotime axis
-#overlap = Integer for the number of interpolated point overlap there is between adjacent windows of comparison
-#p_val = Float for the significance threshold when calculating p-values
-#min.pct = Float for the minimum proportion of cells (for one of the conditions) that a gene needs to be expressed in, to count as being differentially expressed
-#logfc = Float for the absolute Log2 fold change that a gene needs to have between the two conditions, to count as being differentially expressed
-#all.genes = Boolean on whether to test all the genes in the datasets or not
-#own.genes = String vector containing a list of genes the user would like to test (adjustment of p-values will still be based on all the genes)
-#test.use = String detailing what statistical test to use when calculating p-values. Options are: t-test ("t"), mann-whitney U test ("wilcox", default) and permutation ("perm")
-#correct = Boolean value for whether to correct the p-values using Bonferroni multiple test correction or not
-
-TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use = "wilcox", correct = T){
+TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05, min.pct = 0.1, logfc = 0.5, all.genes, own.genes = "no",test_use, correct = T){
   
   if(test_use == "t"){
     test_function <- function(x,y){t.test(x,y)}
@@ -1602,8 +1602,7 @@ TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05
   comparisons_cp <- comparisons
   
   for (i in 1:length(final_comparisons)){
-    # print("")
-    # print(i)
+
     move <- final_comparisons[i] - overlap
     
     cells_1 <- c()
@@ -1636,7 +1635,6 @@ TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05
   
   #return(exp_mtx_list)
   
-  print(final_comparisons)
   return(list(de_genes_output, exp_mtx_list, capture_output, comparisons_cp))
 }
 
@@ -1648,8 +1646,7 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   gene_list <- intersect(row.names(expr1), row.names(expr2))
   gene_all <- gene_list
   
-  print(length(gene_list))
-  
+
   expr1 <- expr1[gene_list,]
   expr2 <- expr2[gene_list,]
   
@@ -1701,7 +1698,6 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   # print("")
 
   if(all.genes == T & own.genes == "no"){
-    print("help")
     gene_list <- gene_all
   }
   
@@ -1710,8 +1706,7 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
     gene_list <- own.genes
   }
   
-  print(length(gene_list))
-  
+
   for (gene in gene_list){
     test_result <- test_function(expr1[gene,], expr2[gene,])
     
@@ -1722,11 +1717,7 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
   
  
     library(stats)
-    print("corrected P-value")
-    print("length before")
-    print(length(gene_df[,1]))
-    print("")
-    print(length(gene_list_og))
+
     gene_df[,4] <- p.adjust(gene_df[,4], method = "bonferroni", length(gene_list_og))
     if (all.genes == F & own.genes == "no"){
       #Remove genes with non-significant p-values and logfc not in the threshold
@@ -1741,9 +1732,6 @@ de_metrics_return <- function(expr1, expr2, logfc_threshold, pval_threshold, min
       
       gene_df <- gene_df[which(gene_df[,2] > logfc_threshold | gene_df[,2] < (-1*logfc_threshold) ) , ]
     }
-    print("Length after")
-    print(length(gene_df[,1]))
-  
   
   
    
@@ -1755,7 +1743,6 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
   
   output <- list()
   for (i in 1:length(cell_groupings[[1]])){
-    print(i)
     #print(cell_groupings[[1]][i])
     #print(cell_groupings[[2]][i])
     expr_mtx_1_window <- as.matrix(expr_mtx_1[ , which(colnames(expr_mtx_1) %in% cell_groupings[[1]][[i]]) ])
@@ -1792,16 +1779,8 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
       condition_2 <- mean.fxn(expr_mtx_2_window)
       
       logfc_change <- condition_1 - condition_2
-      print("Seurat method")
     }
     
-    else{
-      condition_1 <- rowMeans(expr_mtx_1_window)
-      condition_2 <- rowMeans(expr_mtx_2_window)
-      
-      logfc_change <- log2(condition_1 / condition_2)
-      print("Own method")
-    }
     
     
     test_result_vector <- c()
@@ -1833,5 +1812,76 @@ window_t_test_de <- function(expr_mtx_1, expr_mtx_2, cell_groupings, logfc_thres
   
 }
 
+tragedy_test_function <- function(path){
+  
+  WT_1_sce <- readRDS(paste0(path,"/WT_1_sce.rds"))
+  WT_2_sce <- readRDS(paste0(path,"/WT_2_sce.rds"))
+  
+  features <- read.csv(paste0(path,"/feature_space.csv"), row.names = 1)
+  features <- features$x
+  
+  pseudo_end <- max(WT_2_sce$slingPseudotime_1, WT_1_sce$slingPseudotime_1)
+  window <- pseudo_end / 45
 
+  WT_1_tree <- nodePseudotime(WT_1_sce,"slingPseudotime_1","cell_type", 50, "WT1")
+  WT_2_tree <- nodePseudotime(WT_2_sce,"slingPseudotime_1","cell_type", 50, "WT2")
+  
+  WT_1_node_exp_mtx <- nodeExpressionEstimate(WT_1_sce@assays@data@listData$logcounts, WT_1_tree, window, adjust.window = T)
+  WT_2_node_exp_mtx <- nodeExpressionEstimate(WT_2_sce@assays@data@listData$logcounts, WT_2_tree, window, adjust.window = T)
+  
+  WT_2_node_exp_mtx  <- WT_2_node_exp_mtx[ features, ]
+  WT_1_node_exp_mtx <- WT_1_node_exp_mtx[ features, ]
+  
+  penalty_mtx_cut <- dis_mtx_calculator(as.matrix(WT_1_node_exp_mtx), as.matrix(WT_2_node_exp_mtx), "spearman")
+  
+  path_tragedy <- bootstrap_pathfind(sequence_1 = as.matrix(WT_1_node_exp_mtx), sequence_2 = as.matrix(WT_2_node_exp_mtx)
+                                     , similarity_method= "spearman", threshold_method = "mean")
+  
+  path_tragedy_cut <- cut_deviate(path_tragedy[[1]], penalty_mtx_cut, method = "mean")
+  
+  PlotAlignment(path_tragedy_cut, penalty_mtx_cut)
+  
+  pseudo_1 <- WT_2_tree$pseudotime
+  pseudo_2 <- WT_1_tree$pseudotime
+  alignment <- path_tragedy_cut
+  id1 <- WT_2_tree$ID
+  id2 <- WT_1_tree$ID
+  
+  PlotOutput(WT_1_tree, WT_2_tree, alignment)
+  
+  alignedPoints <- chunk_node(WT_1_tree$node_pseudotime, WT_2_tree$node_pseudotime, path_tragedy_cut)
+  
+  
+  WT_1_tree_aligned <- WT_1_tree
+  WT_1_tree_aligned$node_pseudotime <- alignedPoints$condition_1$pseudotime
+  names(WT_1_tree_aligned$node_pseudotime) <- row.names(alignedPoints$condition_1)
+  
+  WT_2_tree_aligned <- WT_2_tree
+  WT_2_tree_aligned$node_pseudotime <- alignedPoints$condition_2$pseudotime
+  names(WT_2_tree_aligned$node_pseudotime) <- row.names(alignedPoints$condition_2)
+  
+  PlotOutput(WT_1_tree_aligned, WT_2_tree_aligned, alignment)
+  
+  WT_1_cell_pseudo_new <- pseudo_cell_align(WT_1_tree$cell_pseudotime, alignedPoints$condition_1 , WT_1_tree$node_pseudotime, window)
+  WT_2_cell_pseudo_new <- pseudo_cell_align(WT_2_tree$cell_pseudotime, alignedPoints$condition_2 , WT_2_tree$node_pseudotime, window)
+  
+  WT_1_pseudotime_groundTruth <- read.csv(paste0(path,"/WT_1_tragedyAdjust_pseudotime_groundtruth.csv"), row.names = 1, header= T)
+  WT_2_pseudotime_groundTruth <- read.csv(paste0(path,"/WT_2_tragedyAdjust_pseudotime_groundtruth.csv"), row.names = 1, header = T)
+  
+  pass_1 <- FALSE
+  pass_2 <- FALSE
+  
+  if (sum(round(WT_1_pseudotime_groundTruth$x, digits = 6) == round(WT_1_cell_pseudo_new$pseudotime, digits = 6)) == length(WT_1_cell_pseudo_new$pseudotime)){
+    pass_1 <- TRUE
+  }
+  
+  if (sum(round(WT_2_pseudotime_groundTruth$x, digits = 6) == round(WT_2_cell_pseudo_new$pseudotime, digits = 6))){
+    pass_2 <- TRUE
+  }
+  
+  if(pass_1 & pass_2){
+    print("Test passed")
+  }
+  
+}
 
