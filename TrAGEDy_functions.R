@@ -328,8 +328,6 @@ bootstrap_path <- function(input, bootstrap_iterate, bootstrap_len, seed = 100){
   
   for(i in bootstrap_iterate){
     
-    #100 works for the Brucei WT alignment
-    #Tried 42, 100-200
     sample_index <- {set.seed(seed); sample(seq(1, length(input), 1), size = bootstrap_len, replace = T)}
     
     output <- input[sample_index]
@@ -356,7 +354,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   }
   
   penalty_mtx <- dis_mtx_calculator(sequence_1, sequence_2, similarity_method)
-
+  
   #Get the most minimum start and end points
   #Get the last possible start and end points
   #Bootstrap paths (n parameter times, default 100) for all the possible start and end points and get their average score
@@ -417,14 +415,14 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   end_min[1] <- choice_index[end_index_choice]
   
   end_min[2] <- find_optimal(min_slice, end_min[1], position = "end")
-
+  
   #last_start_end <- find_start_end(penalty_mtx, start_min, end_min, threshold_method)
   
   # print(last_start_end)
   
   #We add the [1] to the end of the index choices, just in case the alignment runs from the very beginning of both sequences,
   # runs to the very end of both sequences, or both.
-
+  
   start_locs <- seq( start_min[1], start_min[ 2 ], 1 )
   
   end_locs <- seq( end_min[ 1 ], end_min[ 2 ],1 )
@@ -433,7 +431,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   
   paths <- list()
   
-  #return(list(start_locs, end_locs))
+  penalty_mtx_full <- penalty_mtx
   
   for(i in 1:length(start_locs)){
     start_current <- start_locs[i]
@@ -450,20 +448,24 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
       
       #If the first sequence is the one we are cutting
       if (end_index_choice == 1){
-        end_loc[3-end_index_choice] <- length(penalty_mtx_cut[1,])
+        end_loc[3-end_index_choice] <- length(penalty_mtx_full[1,])
       }
       
       #If the second sequence is the one we are cutting
       else{
-        end_loc[3-end_index_choice] <- length(penalty_mtx_cut[,1])
+        end_loc[3-end_index_choice] <- length(penalty_mtx_full[,1])
       }
       
       
       sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
       sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
       
+      print(c(start_loc[1],end_loc[1]))
+      print(c(start_loc[2],end_loc[2]))
+      
       penalty_mtx <- dis_mtx_calculator(sequence_1_cut, sequence_2_cut, similarity_method)
       
+      print(dim(penalty_mtx))
       
       #We do not want to pathfind across an alignment that just crosses perfectly vertically or 
       #horizontally across the dissimilarity matrix.
@@ -471,13 +473,13 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
         path <- pathfind(penalty_mtx, cut_type = "both", threshold_method)
         
         paths[[paste0(start_current, "_", end_current)]] <- path[,3]
-
+        
       }
       
     }
     
   }
-
+  
   
   score_mtx <- matrix(0, nrow = length(start_locs), ncol = length(end_locs))
   
@@ -485,7 +487,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   row.names(score_mtx) <- as.character(start_locs)
   
   bootstrap_n <- max(lengths(paths))
-
+  
   for(i in names(paths)){
     current_path <- paths[[i]]
     
@@ -497,7 +499,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   
   #Run the new score_mtx through the find_optimal function 
   
-
+  
   #Return the path which had the lowest average score across the bootstraps
   
   ###########       NOTE        #################
@@ -507,7 +509,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   
   #We create a threshold around the current chosen start/end combination based on the mean or median distance between the bootstrapped path scores.
   #We then select the path that falls within that threshold and maximises being the furthest back at the start and the furthest forward at the end
-
+  
   #In the case that the score mtx is 1D
   if(1 %in% dim(score_mtx)){
     score_vector <- c()
@@ -522,7 +524,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   else{
     threshold_value <- min(score_mtx) + cutoff_metric(dist(score_mtx))
   }
-
+  
   valid_paths_index <- which(score_mtx <= threshold_value, arr.ind = TRUE)
   
   valid_path_starts <- as.integer(row.names(score_mtx)[valid_paths_index[,1]])
@@ -540,21 +542,21 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   start_loc <- c(row_index,row_index)
   end_loc <- c(col_index,col_index)
   
-
+  
   
   start_loc[3-start_index_choice] <- 1
   
   #If the first sequence is the one we are cutting
   if (end_index_choice == 1){
-    end_loc[3-end_index_choice] <- length(penalty_mtx_cut[,1])
+    end_loc[3-end_index_choice] <- length(penalty_mtx_full[,1])
   }
   
   #If the second sequence is the one we are cutting
   else{
-    end_loc[3-end_index_choice] <- length(penalty_mtx_cut[1,])
+    end_loc[3-end_index_choice] <- length(penalty_mtx_full[1,])
   }
   
-
+  
   
   sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
   sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
@@ -566,6 +568,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   return(list(path, score_mtx, paths))
   
 }
+
 
 #Redo this function so it can take the start and end seperately. Will make the function simpler. 
 #Also add a for statement before entering to make sure the very start and very end are not the initial start and ends
@@ -673,7 +676,6 @@ find_optimal <- function(score_slice, point,position, method = "mean"){
   
   #point - numeric vector giving the row (first sequence) and column (second sequence) position of the current optimal point for alignment beginning/end
   #Position - string which tells the function whether we are trying to find the optimal start or end point
-  print(point)
   if(method == "mean"){
     cutoff_metric <- function(x){return(mean(x))}
     
@@ -685,35 +687,33 @@ find_optimal <- function(score_slice, point,position, method = "mean"){
   }
   
   if(position == "start"){
-    direction_metric <- function(x){return(min(x))}
+    direction <- function(x){return(min(x))}
     
   }
   
   else if(position == "end"){
-    direction_metric <- function(x){return(max(x))}
+    direction <- function(x){return(max(x))}
     
   }
   
   #Find the distance between the score of the current optimal point and all the other possible points
-  distances_2 <- c()
+  distances <- c()
   for (i in 1:length(score_slice)){
-    distances_2 <- append(distances_2, abs(score_slice[point] - score_slice[i]) )
+    distances <- append(distances, abs(score_slice[point] - score_slice[i]) )
   }
   
   #Find the rate of change in score as we go across the possible optimal points
-  change_v2 <- c()
+  change <- c()
   for(i in 2:length(score_slice)){
-    change_v2 <- append(change_v2, abs(score_slice[i]-abs(score_slice[i-1])))
+    change <- append(change, abs(score_slice[i]-score_slice[i-1]))
     
   }
   
-  cutoff_2 <- cutoff_metric(change_v2)
+  cutoff <- cutoff_metric(change)
   
-  hist_distance <- hist(distances_2)
+  choices <- which(distances < cutoff)
   
-  choices_2 <- which(distances_2 < hist_distance$breaks[2])
-  
-  point <- direction_metric(choices_2)
+  point <- direction(choices)
   
   return(point)
   
@@ -905,12 +905,12 @@ cut_deviate <- function(alignment, dis_mtx, method){
   
   threshold_output <- get_thresholds(alignment, dis_mtx, method)
   
-  median_match <- threshold_output[[1]]
-  median_unmatch <- threshold_output[[2]]
+  score_match <- threshold_output[[1]]
+  score_unmatch <- threshold_output[[2]]
   match_cost <- threshold_output[[3]]
   
   
-  score_frame <- data.frame( match_median = abs(match_cost[["score"]] - median_match), unmatch_median = abs(match_cost[["score"]] - median_unmatch) )
+  score_frame <- data.frame( score_match = abs(match_cost[["score"]] - score_match), score_unmatch = abs(match_cost[["score"]] - score_unmatch) )
   
   final_match <- cbind(alignment, rep("match", length(alignment[,1])))
   
@@ -1534,7 +1534,7 @@ TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05
   
   comparisons <- list()
   
-  #FInd groups for comparisons
+  #Find groups for comparisons
   i <- 1
   while ( i < (length(matches[,1]) +1) ){
     
