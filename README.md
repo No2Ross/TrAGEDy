@@ -169,6 +169,14 @@ output <- TrajDE(list(WT_1_sce, WT_2_sce), list(WT_1_tree_aligned, WT_2_tree_ali
 
 ```
 
+## Recreating TrAGEDy paper results
+
+On the following Zenodo project there are the scripts and objects required to recreate the results of the TrAGDEy paper: 10.5281/zenodo.13310931
+
+Download the Zenodo folder and unzip it. The Zenodo folder contains three subdirectories for replicating the simulated, Trypanosoma brucei and T cell analyses. The scripts are numbered based on the order they need to be run, i.e. script 01_[name].R should be run before script 02_[name].R
+
+The scripts contain the variable workingDirPath. Please put the path to the Zenodo folder to ensure smooth running of the scripts.
+
 
 
 
