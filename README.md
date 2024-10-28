@@ -177,6 +177,8 @@ Download the Zenodo folder and unzip it. The Zenodo folder contains three subdir
 
 The scripts contain the variable workingDirPath. Please put the path to the Zenodo folder to ensure smooth running of the scripts.
 
+The PHATE seed has been set to 1 in all the scripts, however we've noticed that the results can still change between users. We have included the PHATE space objects in the Zenodo, incase the PHATE space for the datasets cannot be replicated.
+
 
 
 
