@@ -160,12 +160,6 @@ mean.fxn <- function(x) {
 
 commonID <- function(captures, clusters){
   
-  
-  #If we only have one meta data value for the variable
-  if( length(unique(clusters[,1])) == 1 ){
-    return( output <- data.frame(rep(unique(clusters[,1]), length(names(captures))), row.names= names(captures)) )
-  }
-  
   output <- data.frame(rep("id", length(names(captures))), row.names= names(captures))
   
   #If we have more than 1 meta data variable
@@ -184,6 +178,7 @@ commonID <- function(captures, clusters){
       choice <- names(occurence)[which(occurence == max(occurence))]
       
       if (length(choice) > 1){
+        # choice <- paste0(choice, collapse = "/")
         choice <- choice[1]
         
       }
@@ -238,7 +233,6 @@ nodePseudotime <- function(sc_obj,pseudotime_ID,meta_IDs, total_nodes, prefix){
     
   }
   
-
   colnames(cell_ID) <- meta_IDs
 
   output <- list()
@@ -247,6 +241,7 @@ nodePseudotime <- function(sc_obj,pseudotime_ID,meta_IDs, total_nodes, prefix){
   cell_pseudotime_ordered <- sort(cell_pseudotime)
 
   max_pseudo <- max(cell_pseudotime, na.rm=T)
+  
   
   #Get pseudotime of interpolated points
   interval <- max_pseudo / (total_nodes + 1)
@@ -262,7 +257,7 @@ nodePseudotime <- function(sc_obj,pseudotime_ID,meta_IDs, total_nodes, prefix){
   for (node in 1:(length(node_names)-1)){
     node_tree <- rbind( node_tree , c( node_names[node+1], node_names[node]) )
   }
-
+  
   # node_pseudotime <- data.frame(node_pseudotime_vector,row.names=node_names)
   # colnames(node_pseudotime) <- "pseudotime"
   
@@ -271,12 +266,10 @@ nodePseudotime <- function(sc_obj,pseudotime_ID,meta_IDs, total_nodes, prefix){
 
   #Get most common cell type for each inteprolated point
   captures <- cell_capture(cell_pseudotime_ordered, node_pseudotime)
-
-  #Problem below
   node_cluster <- commonID(captures, cell_ID)
   # node_cluster <- node_cluster[,1]
   # names(node_cluster) <- node_names
-
+  
   colnames(node_tree) <- node_tree[1, ]
   
   #Remove the initial values we used to create the data frame
@@ -336,7 +329,7 @@ bootstrap_path <- function(input, bootstrap_iterate, bootstrap_len, seed = 100){
   for(i in bootstrap_iterate){
     
     sample_index <- {set.seed(seed); sample(seq(1, length(input), 1), size = bootstrap_len, replace = T)}
-    
+    print(sample_index)
     output <- input[sample_index]
     
     result <- append(result, mean(output))
@@ -374,7 +367,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   # choice_index <- c( which( penalty_mtx[,1] == min(penalty_mtx[,1]) )[1], 
   #                    which( penalty_mtx[1,] == min(penalty_mtx[1,]) )[1] )
   
-  start_index_choice <- which(choice == min(choice))[1]
+  start_index_choice <- which(choice == min(choice))
   
   if(start_index_choice == 1){
     min_slice <-penalty_mtx[,1]
@@ -406,14 +399,14 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   choice_index <- c( which( penalty_mtx[,last_column] == min(penalty_mtx[,last_column]) ),
                      which( penalty_mtx[last_row,] == min(penalty_mtx[last_row,]) ) )
   
-  end_index_choice <- which(choice == min(choice))[1]
+  end_index_choice <- which(choice == min(choice))
   
   if(end_index_choice == 1){
-    min_slice <-penalty_mtx[,last_column]
+    min_slice <-penalty_mtx[,last_row]
   }
   
   else if(end_index_choice == 2){
-    min_slice <- penalty_mtx[last_row,]
+    min_slice <- penalty_mtx[last_column,]
   }
   
   
@@ -434,9 +427,7 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
   
   end_locs <- seq( end_min[ 1 ], end_min[ 2 ],1 )
   
-  #If there is more than one optimal start site, iterate through the combinations
-  
-  
+  #Iterate through the combinations
   
   paths <- list()
   
@@ -468,8 +459,13 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
       
       sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
       sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
-
+      
+      print(c(start_loc[1],end_loc[1]))
+      print(c(start_loc[2],end_loc[2]))
+      
       penalty_mtx <- dis_mtx_calculator(sequence_1_cut, sequence_2_cut, similarity_method)
+      
+      print(dim(penalty_mtx))
       
       #We do not want to pathfind across an alignment that just crosses perfectly vertically or 
       #horizontally across the dissimilarity matrix.
@@ -484,104 +480,92 @@ bootstrap_pathfind <- function(sequence_1,sequence_2, similarity_method = "spear
     
   }
   
-  #If we just have one path
   
-  if(length(paths) == 1){
+  score_mtx <- matrix(0, nrow = length(start_locs), ncol = length(end_locs))
+  
+  colnames(score_mtx) <- as.character(end_locs)
+  row.names(score_mtx) <- as.character(start_locs)
+  
+  bootstrap_n <- max(lengths(paths))
+  
+  for(i in names(paths)){
+    current_path <- paths[[i]]
     
-    return(list(path, paths))
+    current_index <- str_split(i, "_")[[1]]
+    
+    score_mtx[current_index[1],current_index[2]] <- bootstrap_path(current_path, bootstrap_iterate,  bootstrap_n, seed)
     
   }
   
-  #If there are multiple optimal paths
+  #Run the new score_mtx through the find_optimal function 
+  
+  
+  #Return the path which had the lowest average score across the bootstraps
+  
+  ###########       NOTE        #################
+  #Won't work if there are points with the same minimum value
+  
+  ###New section start###
+  
+  #We create a threshold around the current chosen start/end combination based on the mean or median distance between the bootstrapped path scores.
+  #We then select the path that falls within that threshold and maximises being the furthest back at the start and the furthest forward at the end
+  
+  #In the case that the score mtx is 1D
+  if(1 %in% dim(score_mtx)){
+    score_vector <- c()
+    
+    for (value in score_mtx){score_vector <- append(score_vector, value)}
+    
+    threshold_value <- min(score_mtx) + cutoff_metric(dist(score_vector))
+    
+    
+  }
+  
   else{
-    
-    score_mtx <- matrix(0, nrow = length(start_locs), ncol = length(end_locs))
-    
-    colnames(score_mtx) <- as.character(end_locs)
-    row.names(score_mtx) <- as.character(start_locs)
-    
-    bootstrap_n <- max(lengths(paths))
-    
-    for(i in names(paths)){
-      current_path <- paths[[i]]
-      
-      current_index <- str_split(i, "_")[[1]]
-      
-      score_mtx[current_index[1],current_index[2]] <- bootstrap_path(current_path, bootstrap_iterate,  bootstrap_n, seed)
-      
-    }
-    
-    #Run the new score_mtx through the find_optimal function 
-    
-    
-    #Return the path which had the lowest average score across the bootstraps
-    
-    ###########       NOTE        #################
-    #Won't work if there are points with the same minimum value
-    
-    ###New section start###
-    
-    #We create a threshold around the current chosen start/end combination based on the mean or median distance between the bootstrapped path scores.
-    #We then select the path that falls within that threshold and maximises being the furthest back at the start and the furthest forward at the end
-    
-    #In the case that the score mtx is 1D
-    if(1 %in% dim(score_mtx)){
-      score_vector <- c()
-      
-      for (value in score_mtx){score_vector <- append(score_vector, value)}
-      
-      threshold_value <- min(score_mtx) + cutoff_metric(dist(score_vector))
-      
-      
-    }
-    
-    else{
-      threshold_value <- min(score_mtx) + cutoff_metric(dist(score_mtx))
-    }
-    
-    valid_paths_index <- which(score_mtx <= threshold_value, arr.ind = TRUE)
-    
-    valid_path_starts <- as.integer(row.names(score_mtx)[valid_paths_index[,1]])
-    valid_path_ends <-  as.integer(colnames(score_mtx)[valid_paths_index[,2]])
-    
-    valid_path <- which(valid_path_ends - valid_path_starts == max(valid_path_ends - valid_path_starts))
-    
-    row_index <- valid_path_starts[valid_path]
-    col_index <- valid_path_ends[valid_path]
-    ###New section end###
-    
-    # row_index <- row.names(score_mtx)[which(rowMins(score_mtx) == min(rowMins(score_mtx)))]
-    # col_index <- colnames(score_mtx)[which(colMins(score_mtx) == min(colMins(score_mtx)))]
-    
-    start_loc <- c(row_index,row_index)
-    end_loc <- c(col_index,col_index)
-    
-    
-    
-    start_loc[3-start_index_choice] <- 1
-    
-    #If the first sequence is the one we are cutting
-    if (end_index_choice == 1){
-      end_loc[3-end_index_choice] <- length(penalty_mtx_full[1,])
-    }
-    
-    #If the second sequence is the one we are cutting
-    else{
-      end_loc[3-end_index_choice] <- length(penalty_mtx_full[,1])
-    }
-
-    
-    sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
-    sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
-    
-    penalty_mtx <- dis_mtx_calculator(sequence_1_cut, sequence_2_cut, similarity_method)
-    
-    path <- pathfind(penalty_mtx, cut_type = "both", threshold_method)
-    
-    return(list(path, score_mtx, paths))
-    
+    threshold_value <- min(score_mtx) + cutoff_metric(dist(score_mtx))
   }
   
+  valid_paths_index <- which(score_mtx <= threshold_value, arr.ind = TRUE)
+  
+  valid_path_starts <- as.integer(row.names(score_mtx)[valid_paths_index[,1]])
+  valid_path_ends <-  as.integer(colnames(score_mtx)[valid_paths_index[,2]])
+  
+  valid_path <- which(valid_path_ends - valid_path_starts == max(valid_path_ends - valid_path_starts))
+  
+  row_index <- valid_path_starts[valid_path]
+  col_index <- valid_path_ends[valid_path]
+  ###New section end###
+  
+  # row_index <- row.names(score_mtx)[which(rowMins(score_mtx) == min(rowMins(score_mtx)))]
+  # col_index <- colnames(score_mtx)[which(colMins(score_mtx) == min(colMins(score_mtx)))]
+  
+  start_loc <- c(row_index,row_index)
+  end_loc <- c(col_index,col_index)
+  
+  
+  
+  start_loc[3-start_index_choice] <- 1
+  
+  #If the first sequence is the one we are cutting
+  if (end_index_choice == 1){
+    end_loc[3-end_index_choice] <- length(penalty_mtx_full[,1])
+  }
+  
+  #If the second sequence is the one we are cutting
+  else{
+    end_loc[3-end_index_choice] <- length(penalty_mtx_full[1,])
+  }
+  
+  
+  
+  sequence_1_cut <- sequence_1[,start_loc[1]:end_loc[1]]
+  sequence_2_cut <- sequence_2[,start_loc[2]:end_loc[2]]
+  
+  penalty_mtx <- dis_mtx_calculator(sequence_1_cut, sequence_2_cut, similarity_method)
+  
+  path <- pathfind(penalty_mtx, cut_type = "both", threshold_method)
+  
+  return(list(path, score_mtx, paths))
   
 }
 
@@ -726,7 +710,7 @@ find_optimal <- function(score_slice, point,position, method = "mean"){
   }
   
   cutoff <- cutoff_metric(change)
-
+  
   choices <- which(distances < cutoff)
   
   point <- direction(choices)
@@ -1424,16 +1408,16 @@ PlotOutput<- function(tree_1, tree_2, alignment){
     plot_counter <- plot_counter + 1
   }
   
-
+  
   plot_df <- plot_df[-1,]
-
+  
   #If there is a 1 to 1 alignment
   
   if (length(unaligned_nodes)==0){
     print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
-
+    
   }
-
+  
   else{
     
     #add unaligned nodes
@@ -1445,7 +1429,7 @@ PlotOutput<- function(tree_1, tree_2, alignment){
     
     plot_df <- rbind(plot_df, unaligned_frame)
     
-
+    
     print( ggplot(data = plot_df, aes(pseudotime, condition)) + geom_point(aes(col = ID), size=3) + geom_line(aes(group = group)) + theme_classic() )#+scale_x_continuous(breaks = seq(0, max(plot_df$pseudotime), max(plot_df$pseudotime)/5)) )
     
   }
@@ -1624,7 +1608,8 @@ TrajDE <- function(sce_obj, traj_info, matches ,n_windows, overlap, p_val = 0.05
     cells_2 <- c()
     
     for (j in 1:final_comparisons[i]){
-
+      # print(paste0("j = ", j))
+      # print(comparisons[[j]][[1]])
       cells_1 <- append(cells_1, unlist( capture_output[[1]][ comparisons[[j]][[1]] ] ) )  
       cells_2 <- append(cells_2, unlist( capture_output[[2]][ comparisons[[j]][[2]] ] ) )
       
